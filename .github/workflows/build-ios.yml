@@ -40,6 +40,7 @@ jobs:
       - name: Build archive (unsigned)
         working-directory: mobile
         run: |
+          set -o pipefail
           xcodebuild archive \
             -workspace ios/LifeOS.xcworkspace \
             -scheme LifeOS \
@@ -49,7 +50,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             -destination "generic/platform=iOS" \
-            | xcpretty || true
+            | xcpretty
 
       - name: Package IPA
         run: |
