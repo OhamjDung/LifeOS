@@ -47,6 +47,14 @@ jobs:
               "    target.build_configurations.each do |config|\n"
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
+              "    target.build_phases.each do |phase|\n"
+              "      next unless phase.respond_to?(:shell_script)\n"
+              "      # xcframework already built by pod install; nested xcodebuild in this script fails in CI\n"
+              "      if phase.name&.include?('Build ExpoModulesJSI xcframework')\n"
+              "        phase.shell_script = 'echo ExpoModulesJSI xcframework already built by pod install'\n"
+              "        phase.output_paths = ['$(DERIVED_FILE_DIR)/ExpoModulesJSI.built']\n"
+              "      end\n"
+              "    end\n"
               "  end"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
