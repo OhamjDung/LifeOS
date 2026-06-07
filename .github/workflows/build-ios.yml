@@ -15,20 +15,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Select Xcode 26.2
         run: |
-          echo "=== Available Xcode versions ==="
-          ls /Applications/ | grep -i xcode
-          echo "=== Trying Xcode versions in order (need Swift 6.3.1) ==="
-          for ver in Xcode_26.1.1 Xcode_26.1 Xcode_26.0.1 Xcode_26.0 Xcode_26.2 Xcode_26.3; do
-            if [ -d "/Applications/${ver}.app" ]; then
-              sudo xcode-select -s "/Applications/${ver}.app/Contents/Developer"
-              SWIFT_VER=$(swift --version 2>&1 | head -1)
-              echo "Tried $ver: $SWIFT_VER"
-              echo "$SWIFT_VER" | grep -q "6.3" && { echo "Found Swift 6.3.x — using $ver"; break; }
-            fi
-          done
-          echo "=== Final active Xcode ==="
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -75,8 +64,6 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          echo "=== Podfile before patch ==="
-          grep -n "precompile\|post_install" Podfile || echo "no matches"
           # Inject ENABLE_USER_SCRIPT_SANDBOXING=NO into existing post_install block
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
@@ -100,7 +87,7 @@ jobs:
         working-directory: mobile/ios
         run: pod install
         env:
-          EXPO_NO_PRECOMPILED_XCFRAMEWORKS: '1'
+          EXPO_USE_PRECOMPILED_MODULES: '0'
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
