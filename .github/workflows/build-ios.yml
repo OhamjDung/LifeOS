@@ -33,6 +33,23 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
+      - name: Patch Podfile for CI
+        working-directory: mobile/ios
+        run: |
+          # Disable precompile xcframework building (fails in CI without tarball cache)
+          sed -i '' 's/.*precompile.*$/# &/' Podfile || true
+          # Propagate ENABLE_USER_SCRIPT_SANDBOXING=NO to all pod targets
+          cat >> Podfile << 'PATCH'
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+              end
+            end
+          end
+          PATCH
+
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
