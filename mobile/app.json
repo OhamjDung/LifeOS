@@ -17,8 +17,6 @@
         "NSLocationWhenInUseUsageDescription": "LifeOS uses your location to detect which mode you're in.",
         "UIBackgroundModes": [
           "location",
-          "fetch",
-          "location",
           "fetch"
         ],
         "ITSAppUsesNonExemptEncryption": false

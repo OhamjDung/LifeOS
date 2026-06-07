@@ -31,7 +31,7 @@ Env vars required (`web/.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_S
 
 ## Mobile App (Expo)
 
-The mobile app lives in `mobile/`. Uses Expo SDK 54 + Expo Router v6.
+The mobile app lives in `mobile/`. Uses Expo SDK 56 + Expo Router v6.
 
 ```bash
 # From mobile/
