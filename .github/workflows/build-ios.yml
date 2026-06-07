@@ -15,12 +15,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.3
+      - name: Select Xcode 26 (Swift 6.3.1 — matches Expo SDK 56 prebuilt xcframeworks)
         run: |
           echo "=== Available Xcode versions ==="
           ls /Applications/ | grep -i xcode
-          echo "=== Selecting Xcode 16.3 ==="
-          sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer
+          echo "=== Selecting Xcode 26.x ==="
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_26.1.app/Contents/Developer 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
           echo "=== Active Xcode ==="
           xcodebuild -version
           swift --version
