@@ -38,17 +38,22 @@ jobs:
         run: |
           # Disable precompile xcframework building (fails in CI without tarball cache)
           sed -i '' 's/.*precompile.*$/# &/' Podfile || true
-          # Propagate ENABLE_USER_SCRIPT_SANDBOXING=NO to all pod targets
-          cat >> Podfile << 'PATCH'
-
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
-              end
-            end
-          end
-          PATCH
+          # Inject ENABLE_USER_SCRIPT_SANDBOXING=NO into existing post_install block
+          python3 << 'PYEOF'
+          with open('Podfile', 'r') as f:
+              content = f.read()
+          inject = (
+              "\n  installer.pods_project.targets.each do |target|\n"
+              "    target.build_configurations.each do |config|\n"
+              "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
+              "    end\n"
+              "  end"
+          )
+          content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
+          with open('Podfile', 'w') as f:
+              f.write(content)
+          print('Podfile patched')
+          PYEOF
 
       - name: Install CocoaPods
         working-directory: mobile/ios
