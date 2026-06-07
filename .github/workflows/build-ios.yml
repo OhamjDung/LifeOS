@@ -20,9 +20,9 @@ jobs:
           echo "=== Available Xcode versions ==="
           ls /Applications/ | grep -i xcode
           echo "=== Selecting Xcode 26.x ==="
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_26.1.1.app/Contents/Developer 2>/dev/null || \
           sudo xcode-select -s /Applications/Xcode_26.1.app/Contents/Developer 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_26.0.1.app/Contents/Developer 2>/dev/null || \
           sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
           echo "=== Active Xcode ==="
           xcodebuild -version
@@ -82,6 +82,9 @@ jobs:
           find Pods/ExpoModulesJSI -maxdepth 4 | sort
           echo "=== ExpoModulesCore xcframework swift modules ==="
           find Pods/ExpoModulesCore -name "*.swiftinterface" 2>/dev/null | head -5
+          echo "=== ExpoModulesCore compiled-with Swift version ==="
+          head -3 Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios.swiftinterface 2>/dev/null || \
+          head -3 Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64_x86_64-simulator/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios-simulator.swiftinterface 2>/dev/null || true
 
       - name: Build archive (unsigned)
         working-directory: mobile
