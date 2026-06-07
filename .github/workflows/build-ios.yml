@@ -15,6 +15,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode 16.3
+        run: |
+          echo "=== Available Xcode versions ==="
+          ls /Applications/ | grep -i xcode
+          echo "=== Selecting Xcode 16.3 ==="
+          sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer
+          echo "=== Active Xcode ==="
+          xcodebuild -version
+          swift --version
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -47,14 +57,6 @@ jobs:
               "    target.build_configurations.each do |config|\n"
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
-              "    target.build_phases.each do |phase|\n"
-              "      next unless phase.respond_to?(:shell_script)\n"
-              "      # xcframework already built by pod install; nested xcodebuild in this script fails in CI\n"
-              "      if phase.name&.include?('Build ExpoModulesJSI xcframework')\n"
-              "        phase.shell_script = 'echo ExpoModulesJSI xcframework already built by pod install'\n"
-              "        phase.output_paths = ['$(DERIVED_FILE_DIR)/ExpoModulesJSI.built']\n"
-              "      end\n"
-              "    end\n"
               "  end"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
@@ -66,6 +68,17 @@ jobs:
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
+
+      - name: Debug post-pod-install
+        working-directory: mobile/ios
+        run: |
+          echo "=== Xcode/Swift version at build time ==="
+          xcodebuild -version
+          swift --version
+          echo "=== ExpoModulesJSI xcframework contents ==="
+          find Pods/ExpoModulesJSI -maxdepth 4 | sort
+          echo "=== ExpoModulesCore xcframework swift modules ==="
+          find Pods/ExpoModulesCore -name "*.swiftinterface" 2>/dev/null | head -5
 
       - name: Build archive (unsigned)
         working-directory: mobile
@@ -81,7 +94,13 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             -destination "generic/platform=iOS" \
-            | xcpretty
+            2>&1 | tee /tmp/xcodebuild.log | xcpretty; \
+          STATUS=${PIPESTATUS[0]}; \
+          if [ $STATUS -ne 0 ]; then \
+            echo "=== XCODEBUILD ERRORS ===" && \
+            grep -E "(error:|PhaseScript|FAILED|Script-)" /tmp/xcodebuild.log | head -60; \
+            exit $STATUS; \
+          fi
 
       - name: Package IPA
         run: |
