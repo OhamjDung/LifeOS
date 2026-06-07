@@ -1,28 +1,109 @@
 import { Tabs } from 'expo-router'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { LinearGradient } from 'expo-linear-gradient'
+import { T, MONO } from '../../lib/theme'
+
+// Analog monospace icons — one character, no emoji
+const ICONS: Record<string, string> = {
+  today:     '⌂',
+  tasks:     '☐',
+  braindump: '◉',
+  notes:     '≡',
+  contacts:  '○',
+}
+
+const LABELS: Record<string, string> = {
+  today:     'TODAY',
+  tasks:     'TASKS',
+  braindump: 'DUMP',
+  notes:     'NOTES',
+  contacts:  'PEOPLE',
+}
+
+function SkTabBar({ state, descriptors, navigation }: any) {
+  const insets = useSafeAreaInsets()
+  const TABS = ['today', 'tasks', 'braindump', 'notes', 'contacts']
+
+  return (
+    <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }}
+      style={[bar.wrap, { paddingBottom: insets.bottom + 6 }]}>
+      {TABS.map((name) => {
+        const routeIdx = state.routes.findIndex((r: any) => r.name === name)
+        const isFocused = routeIdx !== -1 && state.index === routeIdx
+
+        const onPress = () => {
+          if (routeIdx === -1) return
+          navigation.navigate(name)
+        }
+
+        return (
+          <TouchableOpacity key={name} onPress={onPress} activeOpacity={0.75}
+            style={[bar.item, isFocused && bar.itemActive]}>
+            <Text style={[bar.icon, { color: isFocused ? T.sage : T.faint }]}>
+              {ICONS[name]}
+            </Text>
+            <Text style={[bar.label, { color: isFocused ? T.sage : T.faint }]}>
+              {LABELS[name]}
+            </Text>
+          </TouchableOpacity>
+        )
+      })}
+    </LinearGradient>
+  )
+}
 
 export default function TabLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: { backgroundColor: '#111827', borderTopColor: '#1f2937' },
-        tabBarActiveTintColor: '#6366f1',
-        tabBarInactiveTintColor: '#6b7280',
-      }}
+      tabBar={(props) => <SkTabBar {...props} />}
+      screenOptions={{ headerShown: false }}
     >
-      <Tabs.Screen name="tasks"     options={{ title: 'Tasks',     tabBarIcon: ({ color }) => <TabIcon label="✅" color={color} /> }} />
-      <Tabs.Screen name="braindump" options={{ title: 'Braindump', tabBarIcon: ({ color }) => <TabIcon label="🧠" color={color} /> }} />
-      <Tabs.Screen name="notes"     options={{ title: 'Notes',     tabBarIcon: ({ color }) => <TabIcon label="📝" color={color} /> }} />
-      <Tabs.Screen name="contacts"  options={{ title: 'Contacts',  tabBarIcon: ({ color }) => <TabIcon label="👥" color={color} /> }} />
-      <Tabs.Screen name="modes"     options={{ title: 'Modes',     tabBarIcon: ({ color }) => <TabIcon label="📍" color={color} /> }} />
-      {/* Hidden routes — merged into Tasks and Notes */}
+      <Tabs.Screen name="today"     />
+      <Tabs.Screen name="tasks"     />
+      <Tabs.Screen name="braindump" />
+      <Tabs.Screen name="notes"     />
+      <Tabs.Screen name="contacts"  />
       <Tabs.Screen name="calendar"  options={{ href: null }} />
       <Tabs.Screen name="search"    options={{ href: null }} />
+      <Tabs.Screen name="modes"     options={{ href: null }} />
     </Tabs>
   )
 }
 
-function TabIcon({ label, color }: { label: string; color: string }) {
-  const { Text } = require('react-native')
-  return <Text style={{ fontSize: 18 }}>{label}</Text>
-}
+const bar = StyleSheet.create({
+  wrap: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.6)',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingTop: 10,
+    shadowColor: '#948D7E',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  item: {
+    alignItems: 'center',
+    gap: 3,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 13,
+    minWidth: 52,
+  },
+  itemActive: {
+    backgroundColor: 'rgba(0,0,0,0.04)',
+  },
+  icon: {
+    fontSize: 18,
+    lineHeight: 22,
+  },
+  label: {
+    fontFamily: MONO,
+    fontSize: 7.5,
+    letterSpacing: 0.5,
+    fontWeight: '500',
+  },
+})

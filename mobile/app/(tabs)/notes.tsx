@@ -1,22 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  View, Text, TextInput, TouchableOpacity, FlatList,
+  View, Text, TextInput, TouchableOpacity,
   StyleSheet, Animated, Alert,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { LinearGradient } from 'expo-linear-gradient'
 import { useFocusEffect } from 'expo-router'
 import Constants from 'expo-constants'
 import { supabase, supabaseUrl } from '../../lib/supabase'
+import { SkCard, SkKicker, SkChip } from '../../components/Sk'
+import { T, MONO, raisedShadowSm } from '../../lib/theme'
 
 const IS_EXPO_GO = Constants.appOwnership === 'expo'
 
+const CAT_COLOR: Record<string, string> = {
+  Learning: '#CDDBA6', Reference: '#CCC6B6', Idea: '#ECA06A', Meeting: '#9FE3B0',
+}
+
 interface Note {
-  id: string
-  title: string | null
-  content: string
-  category: string | null
-  processing_status: string
-  created_at: string
+  id: string; title: string | null; content: string
+  category: string | null; processing_status: string; created_at: string
 }
 
 export default function NotesScreen() {
@@ -24,11 +27,12 @@ export default function NotesScreen() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Note[]>([])
   const [searching, setSearching] = useState(false)
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null)
+  const [composing, setComposing] = useState(false)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [composing, setComposing] = useState(false)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [listening, setListening] = useState(false)
   const pulse = useRef(new Animated.Value(1)).current
@@ -36,9 +40,8 @@ export default function NotesScreen() {
 
   useEffect(() => {
     if (IS_EXPO_GO) return
-    let Voice: any = null
     try {
-      Voice = require('@react-native-voice/voice').default
+      const Voice = require('@react-native-voice/voice').default
       Voice.isAvailable().then((a: boolean) => setVoiceAvailable(!!a))
       Voice.onSpeechResults = (e: any) => {
         if (e.value?.[0]) setContent(prev => prev ? prev + ' ' + e.value[0] : e.value[0])
@@ -46,31 +49,22 @@ export default function NotesScreen() {
       Voice.onSpeechEnd = () => setListening(false)
       Voice.onSpeechError = () => setListening(false)
       return () => Voice?.destroy().then(Voice?.removeAllListeners)
-    } catch {
-      setVoiceAvailable(false)
-    }
+    } catch { setVoiceAvailable(false) }
   }, [])
 
   useEffect(() => {
     if (listening) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulse, { toValue: 1.2, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-        ])
-      ).start()
-    } else {
-      pulse.stopAnimation()
-      pulse.setValue(1)
-    }
+      Animated.loop(Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.2, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ])).start()
+    } else { pulse.stopAnimation(); pulse.setValue(1) }
   }, [listening])
 
   const fetchNotes = useCallback(async () => {
-    const { data } = await supabase
-      .from('notes')
-      .select('id, title, content, category, processing_status, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50)
+    const { data } = await supabase.from('notes')
+      .select('id,title,content,category,processing_status,created_at')
+      .order('created_at', { ascending: false }).limit(50)
     if (data) setNotes(data as Note[])
   }, [])
 
@@ -79,13 +73,9 @@ export default function NotesScreen() {
   function onSearchChange(q: string) {
     setSearchQuery(q)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (!q.trim()) {
-      setSearchResults([])
-      setSearching(false)
-      return
-    }
+    if (!q.trim()) { setSearchResults([]); setSearching(false); return }
     setSearching(true)
-    debounceRef.current = setTimeout(() => { runSearch(q.trim()) }, 400)
+    debounceRef.current = setTimeout(() => runSearch(q.trim()), 400)
   }
 
   async function runSearch(q: string) {
@@ -105,14 +95,10 @@ export default function NotesScreen() {
 
   async function toggleVoice() {
     if (IS_EXPO_GO) return
-    let Voice: any = null
+    let Voice: any
     try { Voice = require('@react-native-voice/voice').default } catch { return }
-    if (listening) {
-      await Voice.stop()
-      setListening(false)
-    } else {
-      try { await Voice.start('en-US'); setListening(true) } catch { setListening(false) }
-    }
+    if (listening) { await Voice.stop(); setListening(false) }
+    else { try { await Voice.start('en-US'); setListening(true) } catch { setListening(false) } }
   }
 
   async function saveNote() {
@@ -120,15 +106,10 @@ export default function NotesScreen() {
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
     await supabase.from('notes').insert({
-      title: title.trim() || null,
-      content: content.trim(),
-      user_id: user?.id,
-      source_platform: 'ios',
+      title: title.trim() || null, content: content.trim(),
+      user_id: user?.id, source_platform: 'ios',
     })
-    setTitle('')
-    setContent('')
-    setComposing(false)
-    setSaving(false)
+    setTitle(''); setContent(''); setComposing(false); setSaving(false)
     fetchNotes()
   }
 
@@ -136,13 +117,8 @@ export default function NotesScreen() {
     setUploading(true)
     try {
       let DocumentPicker: any
-      try {
-        DocumentPicker = require('expo-document-picker')
-      } catch {
-        Alert.alert('Not available', 'Install expo-document-picker to enable uploads.')
-        setUploading(false)
-        return
-      }
+      try { DocumentPicker = require('expo-document-picker') }
+      catch { Alert.alert('Not available', 'Install expo-document-picker'); setUploading(false); return }
 
       const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true })
       if (result.canceled || !result.assets?.[0]) { setUploading(false); return }
@@ -153,158 +129,190 @@ export default function NotesScreen() {
 
       const ext = asset.name?.split('.').pop() || 'audio'
       const path = `${user.id}/${Date.now()}.${ext}`
-      const fileResponse = await fetch(asset.uri)
-      const blob = await fileResponse.blob()
+      const blob = await (await fetch(asset.uri)).blob()
 
-      const { error: uploadError } = await supabase.storage
-        .from('recordings').upload(path, blob, { contentType: asset.mimeType || 'audio/*' })
-      if (uploadError) { Alert.alert('Upload failed', uploadError.message); setUploading(false); return }
+      const { error } = await supabase.storage.from('recordings')
+        .upload(path, blob, { contentType: asset.mimeType || 'audio/*' })
+      if (error) { Alert.alert('Upload failed', error.message); setUploading(false); return }
 
       const { data: { publicUrl } } = supabase.storage.from('recordings').getPublicUrl(path)
       await supabase.from('braindump_jobs').insert({
-        raw_transcript: `[Audio recording: ${asset.name}]`,
-        audio_url: publicUrl,
-        user_id: user.id,
+        raw_transcript: `[Audio: ${asset.name}]`, audio_url: publicUrl, user_id: user.id,
       })
-      Alert.alert('Uploaded', 'Recording submitted — AI will transcribe and extract tasks in ~2 min.')
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Upload failed')
-    }
+      Alert.alert('Uploaded', 'AI will transcribe and extract tasks in ~2 min.')
+    } catch (e: any) { Alert.alert('Error', e?.message || 'Upload failed') }
     setUploading(false)
   }
 
-  const inSearchMode = searchQuery.trim().length > 0
-  const displayList = inSearchMode ? searchResults : notes
+  const inSearch = searchQuery.trim().length > 0
+  const displayList = inSearch ? searchResults : notes
 
+  // ── Note detail ──
+  if (selectedNote) {
+    const catColor = selectedNote.category ? (CAT_COLOR[selectedNote.category] ?? T.displayInk) : T.displayInk
+    return (
+      <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
+      <SafeAreaView style={ns.safe}>
+        <View style={ns.scroll}>
+          <TouchableOpacity onPress={() => setSelectedNote(null)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={[ns.backBtn, raisedShadowSm]}>
+              <Text style={{ color: T.faint, fontSize: 16 }}>‹</Text>
+            </View>
+            <SkKicker>Notes</SkKicker>
+          </TouchableOpacity>
+          {selectedNote.category && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={[ns.catBadge, { backgroundColor: T.display }]}>
+                <Text style={[ns.catBadgeText, { color: catColor }]}>{selectedNote.category.toUpperCase()}</Text>
+              </View>
+              <Text style={ns.noteDate}>{new Date(selectedNote.created_at).toLocaleDateString()}</Text>
+            </View>
+          )}
+          <Text style={ns.detailTitle}>{selectedNote.title || 'Untitled'}</Text>
+          <SkCard style={{ padding: 18 }}>
+            <Text style={ns.detailBody}>{selectedNote.content}</Text>
+          </SkCard>
+        </View>
+      </SafeAreaView>
+      </LinearGradient>
+    )
+  }
+
+  // ── Compose ──
   if (composing) {
     return (
-      <SafeAreaView style={s.safe}>
-        <View style={s.composer}>
-          <View style={s.composeHeader}>
+      <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
+      <SafeAreaView style={ns.safe}>
+        <View style={ns.scroll}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <TouchableOpacity onPress={() => { setComposing(false); setTitle(''); setContent('') }}>
-              <Text style={s.cancelText}>Cancel</Text>
+              <Text style={ns.cancelText}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={s.composeTitle}>New note</Text>
+            <SkKicker>New note</SkKicker>
             <TouchableOpacity onPress={saveNote} disabled={!content.trim() || saving}>
-              <Text style={[s.saveText, (!content.trim() || saving) && s.saveTextDisabled]}>
+              <Text style={[ns.saveText, (!content.trim() || saving) && { opacity: 0.4 }]}>
                 {saving ? 'Saving…' : 'Save'}
               </Text>
             </TouchableOpacity>
           </View>
-
-          <TextInput style={s.titleInput} placeholder="Title (optional)"
-            placeholderTextColor="#6b7280" value={title} onChangeText={setTitle} />
-
+          <TextInput style={ns.titleInput} placeholder="Title (optional)"
+            placeholderTextColor={T.faint} value={title} onChangeText={setTitle} />
           {voiceAvailable && (
-            <View style={s.voiceRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <Animated.View style={{ transform: [{ scale: pulse }] }}>
-                <TouchableOpacity style={[s.micBtn, listening && s.micBtnActive]} onPress={toggleVoice}>
-                  <Text style={s.micIcon}>{listening ? '⏹' : '🎙'}</Text>
+                <TouchableOpacity style={[ns.micBtn, listening && ns.micBtnActive]} onPress={toggleVoice}>
+                  <Text style={{ fontSize: 18, color: listening ? T.clayFg : T.faint }}>
+                    {listening ? '■' : '◉'}
+                  </Text>
                 </TouchableOpacity>
               </Animated.View>
-              <Text style={s.voiceHint}>{listening ? 'Listening…' : 'Speak to add content'}</Text>
+              <Text style={{ fontFamily: MONO, fontSize: 12, color: T.faint }}>{listening ? 'Listening…' : 'Tap to dictate'}</Text>
             </View>
           )}
-
-          <TextInput style={s.contentInput} placeholder="Start writing…"
-            placeholderTextColor="#6b7280" value={content} onChangeText={setContent}
+          <TextInput style={ns.contentInput} placeholder="Start writing…"
+            placeholderTextColor={T.faint} value={content} onChangeText={setContent}
             multiline autoFocus={!voiceAvailable} textAlignVertical="top" />
         </View>
       </SafeAreaView>
+      </LinearGradient>
     )
   }
 
+  // ── List ──
   return (
-    <SafeAreaView style={s.safe}>
-      <View style={s.container}>
+    <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
+    <SafeAreaView style={ns.safe}>
+      <View style={ns.scroll}>
+
         {/* Header */}
-        <View style={s.header}>
-          <Text style={s.heading}>Notes</Text>
-          <View style={s.headerBtns}>
-            <TouchableOpacity style={[s.uploadBtn, uploading && s.uploadBtnDisabled]}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View>
+            <SkKicker>Second brain</SkKicker>
+            <Text style={ns.heading}>Notes</Text>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 4 }}>
+            <TouchableOpacity style={[ns.uploadBtn, uploading && { opacity: 0.5 }, raisedShadowSm]}
               onPress={uploadRecording} disabled={uploading}>
-              <Text style={s.uploadBtnText}>{uploading ? '⏳' : '🎙 Upload'}</Text>
+              <Text style={ns.uploadText}>{uploading ? '○ …' : '◉ REC'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.newBtn} onPress={() => setComposing(true)}>
-              <Text style={s.newBtnText}>+ New</Text>
-            </TouchableOpacity>
+            <SkChip>{String(notes.length).padStart(2, '0')} NOTES</SkChip>
           </View>
         </View>
 
-        {/* Search bar — always visible */}
-        <View style={s.searchBar}>
-          <Text style={s.searchIcon}>🔍</Text>
-          <TextInput style={s.searchInput} placeholder="Search notes…"
-            placeholderTextColor="#6b7280" value={searchQuery}
-            onChangeText={onSearchChange} returnKeyType="search" clearButtonMode="while-editing" />
-          {searching && <Text style={s.searchingText}>…</Text>}
-        </View>
+        {/* Search bar — always visible, inset style */}
+        <SkCard pressed style={{ paddingHorizontal: 16, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text style={{ fontSize: 15, color: T.faint }}>⌕</Text>
+          <TextInput style={ns.searchInput} placeholder="Search what you know…"
+            placeholderTextColor={T.faint} value={searchQuery} onChangeText={onSearchChange}
+            returnKeyType="search" />
+          {searching && <Text style={{ fontFamily: MONO, fontSize: 11, color: T.faint }}>…</Text>}
+        </SkCard>
 
-        {inSearchMode && (
-          <Text style={s.searchLabel}>
-            {searchResults.length} result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
-          </Text>
+        {inSearch && (
+          <Text style={ns.searchLabel}>{searchResults.length} result{searchResults.length !== 1 ? 's' : ''} · "{searchQuery}"</Text>
         )}
 
-        <FlatList
-          data={displayList}
-          keyExtractor={n => n.id}
-          renderItem={({ item }) => (
-            <View style={s.noteCard}>
-              <View style={s.noteCardHeader}>
-                <Text style={s.noteTitle} numberOfLines={1}>{item.title || 'Untitled'}</Text>
-                {item.category && <Text style={s.noteCategory}>{item.category}</Text>}
-              </View>
-              <Text style={s.noteContent} numberOfLines={2}>{item.content}</Text>
-              <Text style={s.noteDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
-            </View>
-          )}
-          ListEmptyComponent={
-            <Text style={s.empty}>
-              {inSearchMode ? 'No results found.' : 'No notes yet. Tap + New to start.'}
-            </Text>
-          }
-          contentContainerStyle={{ paddingBottom: 32 }}
-        />
+        {/* Note list */}
+        <View style={{ gap: T.listGap }}>
+          {displayList.length === 0 ? (
+            <Text style={ns.empty}>{inSearch ? 'No results found.' : 'No notes yet. Tap + New to start.'}</Text>
+          ) : displayList.map(n => (
+            <NoteCard key={n.id} note={n} onPress={() => setSelectedNote(n)} />
+          ))}
+        </View>
+
+        {/* New note FAB */}
+        <TouchableOpacity style={[ns.newBtn, raisedShadowSm]} onPress={() => setComposing(true)}>
+          <Text style={ns.newBtnText}>+ New note</Text>
+        </TouchableOpacity>
+
       </View>
     </SafeAreaView>
+    </LinearGradient>
   )
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#111827' },
-  container: { flex: 1, padding: 20 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  heading: { fontSize: 28, fontWeight: '700', color: '#fff', marginTop: 8 },
-  headerBtns: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  uploadBtn: { backgroundColor: '#1f2937', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#374151' },
-  uploadBtnDisabled: { opacity: 0.5 },
-  uploadBtnText: { color: '#9ca3af', fontSize: 13 },
-  newBtn: { backgroundColor: '#4f46e5', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  newBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1f2937', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8, borderWidth: 1, borderColor: '#374151' },
-  searchIcon: { fontSize: 14, marginRight: 8 },
-  searchInput: { flex: 1, color: '#fff', fontSize: 15 },
-  searchingText: { color: '#6b7280', fontSize: 13 },
-  searchLabel: { color: '#6b7280', fontSize: 12, marginBottom: 10 },
-  noteCard: { backgroundColor: '#1f2937', borderRadius: 12, padding: 14, marginBottom: 10 },
-  noteCardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  noteTitle: { color: '#e5e7eb', fontSize: 15, fontWeight: '500', flex: 1 },
-  noteCategory: { color: '#6366f1', fontSize: 11, marginLeft: 8 },
-  noteContent: { color: '#9ca3af', fontSize: 13, lineHeight: 18 },
-  noteDate: { color: '#4b5563', fontSize: 11, marginTop: 6 },
-  empty: { color: '#6b7280', textAlign: 'center', marginTop: 40, fontSize: 14 },
-  composer: { flex: 1, padding: 20 },
-  composeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
-  composeTitle: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  cancelText: { color: '#6b7280', fontSize: 15 },
-  saveText: { color: '#6366f1', fontSize: 15, fontWeight: '600' },
-  saveTextDisabled: { opacity: 0.4 },
-  titleInput: { color: '#fff', fontSize: 20, fontWeight: '600', borderBottomWidth: 1, borderBottomColor: '#374151', paddingBottom: 12, marginBottom: 16 },
-  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  micBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#1f2937', borderWidth: 2, borderColor: '#374151', alignItems: 'center', justifyContent: 'center' },
-  micBtnActive: { borderColor: '#ef4444', backgroundColor: '#450a0a' },
-  micIcon: { fontSize: 20 },
-  voiceHint: { color: '#6b7280', fontSize: 13 },
-  contentInput: { flex: 1, color: '#e5e7eb', fontSize: 16, lineHeight: 24 },
+function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
+  const catColor = note.category ? (CAT_COLOR[note.category] ?? T.displayInk) : T.displayInk
+  return (
+    <SkCard onPress={onPress} style={{ padding: 15 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        {note.category ? (
+          <View style={[ns.catBadge, { backgroundColor: T.display }]}>
+            <Text style={[ns.catBadgeText, { color: catColor }]}>{note.category.toUpperCase()}</Text>
+          </View>
+        ) : <View />}
+        <Text style={ns.noteDate}>{new Date(note.created_at).toLocaleDateString()}</Text>
+      </View>
+      <Text style={ns.noteTitle} numberOfLines={1}>{note.title || 'Untitled'}</Text>
+      <Text style={ns.notePreview} numberOfLines={2}>{note.content}</Text>
+    </SkCard>
+  )
+}
+
+const ns = StyleSheet.create({
+  safe:    { flex: 1 },
+  scroll:  { flex: 1, padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap },
+  heading: { fontFamily: MONO, fontSize: 26, fontWeight: '600', color: T.ink, marginTop: 4 },
+  searchInput: { flex: 1, fontFamily: MONO, fontSize: 12.5, color: T.ink },
+  searchLabel: { fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
+  catBadge:    { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  catBadgeText: { fontFamily: MONO, fontSize: 8.5, letterSpacing: 1.5, fontWeight: '600' },
+  noteDate:    { fontFamily: MONO, fontSize: 9.5, color: T.faint },
+  noteTitle:   { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: T.ink, marginBottom: 5 },
+  notePreview: { fontFamily: MONO, fontSize: 11, lineHeight: 17, color: T.mute },
+  uploadBtn:   { backgroundColor: T.surface, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
+  uploadText:  { fontFamily: MONO, fontSize: 11, color: T.mute },
+  newBtn:      { backgroundColor: T.display, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 8, marginBottom: 24 },
+  newBtnText:  { fontFamily: MONO, fontSize: 13, fontWeight: '600', color: T.displayInk, letterSpacing: 0.5 },
+  empty:       { fontFamily: MONO, fontSize: 12, color: T.faint, textAlign: 'center', paddingVertical: 24 },
+  backBtn:     { width: 34, height: 34, borderRadius: 10, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
+  detailTitle: { fontFamily: MONO, fontSize: 22, fontWeight: '600', color: T.ink, letterSpacing: -0.4, lineHeight: 28 },
+  detailBody:  { fontFamily: MONO, fontSize: 12.5, lineHeight: 22, color: T.mute },
+  cancelText:  { fontFamily: MONO, fontSize: 14, color: T.faint },
+  saveText:    { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: T.sage },
+  titleInput:  { fontFamily: MONO, fontSize: 20, fontWeight: '600', color: T.ink, borderBottomWidth: 1, borderBottomColor: T.line, paddingBottom: 12 },
+  micBtn:      { width: 44, height: 44, borderRadius: 22, backgroundColor: T.surface, borderWidth: 2, borderColor: T.line, alignItems: 'center', justifyContent: 'center' },
+  micBtnActive: { borderColor: T.clay, backgroundColor: '#3A1810' },
+  contentInput: { fontFamily: MONO, fontSize: 15, color: T.ink, lineHeight: 24, minHeight: 160 },
 })
