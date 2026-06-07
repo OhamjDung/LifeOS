@@ -15,16 +15,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 26 (Swift 6.3.1 — matches Expo SDK 56 prebuilt xcframeworks)
+      - name: Select Xcode
         run: |
           echo "=== Available Xcode versions ==="
           ls /Applications/ | grep -i xcode
-          echo "=== Selecting Xcode 26.x ==="
-          sudo xcode-select -s /Applications/Xcode_26.1.1.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.1.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.0.1.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
-          echo "=== Active Xcode ==="
+          echo "=== Trying Xcode versions in order (need Swift 6.3.1) ==="
+          for ver in Xcode_26.1.1 Xcode_26.1 Xcode_26.0.1 Xcode_26.0 Xcode_26.2 Xcode_26.3; do
+            if [ -d "/Applications/${ver}.app" ]; then
+              sudo xcode-select -s "/Applications/${ver}.app/Contents/Developer"
+              SWIFT_VER=$(swift --version 2>&1 | head -1)
+              echo "Tried $ver: $SWIFT_VER"
+              echo "$SWIFT_VER" | grep -q "6.3" && { echo "Found Swift 6.3.x — using $ver"; break; }
+            fi
+          done
+          echo "=== Final active Xcode ==="
           xcodebuild -version
           swift --version
 
@@ -39,6 +43,21 @@ jobs:
         working-directory: mobile
         run: npm install --legacy-peer-deps
 
+      - name: Debug npm install result
+        working-directory: mobile
+        run: |
+          echo "=== react-native version installed ==="
+          node -e "console.log(require('./node_modules/react-native/package.json').version)"
+          echo "=== reanimated version ==="
+          node -e "console.log(require('./node_modules/react-native-reanimated/package.json').version)" 2>/dev/null || echo "not found"
+          echo "=== worklets version ==="
+          node -e "console.log(require('./node_modules/react-native-worklets/package.json').version)" 2>/dev/null || echo "not found"
+          echo "=== voice package ==="
+          node -e "console.log(require('./node_modules/@react-native-voice/voice/package.json').version)" 2>/dev/null || echo "not found"
+          echo "=== ExpoModulesCore xcframework in node_modules ==="
+          find node_modules/expo-modules-core -name "ExpoModulesCore.xcframework" -maxdepth 5 2>/dev/null || echo "xcframework NOT in node_modules"
+          find node_modules/expo-modules-core/ios -maxdepth 2 2>/dev/null | head -20
+
       - name: Expo prebuild
         working-directory: mobile
         run: npx expo prebuild --platform ios --clean --no-install
@@ -46,11 +65,18 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
+      - name: Debug Podfile content
+        working-directory: mobile/ios
+        run: |
+          echo "=== Full Podfile ==="
+          cat Podfile
+          echo "=== END Podfile ==="
+
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Disable precompile xcframework building (fails in CI without tarball cache)
-          sed -i '' 's/.*precompile.*$/# &/' Podfile || true
+          echo "=== Podfile before patch ==="
+          grep -n "precompile\|post_install" Podfile || echo "no matches"
           # Inject ENABLE_USER_SCRIPT_SANDBOXING=NO into existing post_install block
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
@@ -65,26 +91,36 @@ jobs:
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
           with open('Podfile', 'w') as f:
               f.write(content)
-          print('Podfile patched')
+          print('Podfile patched successfully')
           PYEOF
+          echo "=== Podfile after patch (post_install section) ==="
+          awk '/post_install/,/^end/' Podfile | head -30
 
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
+        env:
+          EXPO_NO_PRECOMPILED_XCFRAMEWORKS: '1'
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
         run: |
-          echo "=== Xcode/Swift version at build time ==="
-          xcodebuild -version
-          swift --version
-          echo "=== ExpoModulesJSI xcframework contents ==="
-          find Pods/ExpoModulesJSI -maxdepth 4 | sort
-          echo "=== ExpoModulesCore xcframework swift modules ==="
-          find Pods/ExpoModulesCore -name "*.swiftinterface" 2>/dev/null | head -5
-          echo "=== ExpoModulesCore compiled-with Swift version ==="
-          head -3 Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios.swiftinterface 2>/dev/null || \
-          head -3 Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64_x86_64-simulator/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios-simulator.swiftinterface 2>/dev/null || true
+          echo "=== Xcode/Swift version ==="
+          xcodebuild -version && swift --version
+          echo "=== ExpoModulesCore pod directory ==="
+          ls Pods/ExpoModulesCore/ 2>/dev/null | head -20 || echo "dir not found"
+          echo "=== ExpoModulesCore xcframework exists? ==="
+          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework 2>/dev/null && echo "YES - xcframework present" || echo "NO - xcframework absent (will build from source)"
+          echo "=== ExpoModulesCore xcframework Swift version (if present) ==="
+          head -5 "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios.swiftinterface" 2>/dev/null || \
+          head -5 "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64_x86_64-simulator/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios-simulator.swiftinterface" 2>/dev/null || echo "no swiftinterface found"
+          echo "=== ExpoModulesJSI pod directory ==="
+          ls Pods/ExpoModulesJSI/ 2>/dev/null | head -10 || echo "Pods/ExpoModulesJSI not found"
+          echo "=== ExpoModulesJSI in node_modules ==="
+          ls node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/ 2>/dev/null | head -10 || echo "not found at that path"
+          find ../node_modules -name "JSIRepresentable.swift" 2>/dev/null | head -5
+          echo "=== All xcframeworks in Pods ==="
+          find Pods -name "*.xcframework" -maxdepth 4 2>/dev/null | head -20
 
       - name: Build archive (unsigned)
         working-directory: mobile
@@ -104,7 +140,7 @@ jobs:
           STATUS=${PIPESTATUS[0]}; \
           if [ $STATUS -ne 0 ]; then \
             echo "=== XCODEBUILD ERRORS ===" && \
-            grep -E "(error:|PhaseScript|FAILED|Script-)" /tmp/xcodebuild.log | head -60; \
+            grep -E "(error:|PhaseScript|FAILED|Script-)" /tmp/xcodebuild.log | head -80; \
             exit $STATUS; \
           fi
 
