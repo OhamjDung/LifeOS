@@ -167,23 +167,31 @@ export default function TasksScreen() {
   const [tabFilter, setTabFilter] = useState<'ongoing' | 'done'>('ongoing')
 
   const fetchTasks = useCallback(async () => {
-    await supabase.from('tasks')
-      .update({ due_date: todayStr, status: 'pending', updated_at: new Date().toISOString() })
-      .eq('status', 'pending').lt('due_date', todayStr)
-    const { data } = await supabase.from('tasks')
-      .select('*, task_tags(tag_id, tags(id,name))')
-      .eq('due_date', todayStr).neq('status', 'rolled_over')
-      .order('rollover_count', { ascending: false })
-      .order('created_at', { ascending: true })
-    if (data) setTasks(data.map((t: any) => ({
-      ...t, tags: (t.task_tags || []).map((tt: any) => tt.tags).filter(Boolean),
-    })) as Task[])
+    try {
+      await supabase.from('tasks')
+        .update({ due_date: todayStr, status: 'pending', updated_at: new Date().toISOString() })
+        .eq('status', 'pending').lt('due_date', todayStr)
+      const { data } = await supabase.from('tasks')
+        .select('*, task_tags(tag_id, tags(id,name))')
+        .eq('due_date', todayStr).neq('status', 'rolled_over')
+        .order('rollover_count', { ascending: false })
+        .order('created_at', { ascending: true })
+      if (data) setTasks(data.map((t: any) => ({
+        ...t, tags: (t.task_tags || []).map((tt: any) => tt.tags).filter(Boolean),
+      })) as Task[])
+    } catch (e) {
+      console.error('[LifeOS] fetchTasks error:', e)
+    }
     setLoading(false)
   }, [])
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*').order('name')
-    if (data) setTags(data as Tag[])
+    try {
+      const { data } = await supabase.from('tags').select('*').order('name')
+      if (data) setTags(data as Tag[])
+    } catch (e) {
+      console.error('[LifeOS] fetchTags error:', e)
+    }
   }, [])
 
   useEffect(() => {

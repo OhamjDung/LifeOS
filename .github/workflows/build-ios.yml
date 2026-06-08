@@ -48,6 +48,18 @@ jobs:
           find node_modules/expo-modules-core -name "ExpoModulesCore.xcframework" -maxdepth 5 2>/dev/null || echo "xcframework NOT in node_modules"
           find node_modules/expo-modules-core/ios -maxdepth 2 2>/dev/null | head -20
 
+      - name: Write .env file
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          printf 'EXPO_PUBLIC_SUPABASE_URL=%s\n' "$EXPO_PUBLIC_SUPABASE_URL" > .env
+          printf 'EXPO_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$EXPO_PUBLIC_SUPABASE_ANON_KEY" >> .env
+          echo "=== env var lengths ==="
+          echo "URL chars: ${#EXPO_PUBLIC_SUPABASE_URL}"
+          echo "KEY chars: ${#EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+
       - name: Expo prebuild
         working-directory: mobile
         run: npx expo prebuild --platform ios --clean --no-install

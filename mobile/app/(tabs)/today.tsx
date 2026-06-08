@@ -18,16 +18,20 @@ export default function TodayScreen() {
   const todayStr = new Date().toISOString().split('T')[0]
 
   const load = useCallback(async () => {
-    const [{ data: t }, { data: c }] = await Promise.all([
-      supabase.from('tasks')
-        .select('*, task_tags(tag_id, tags(id,name))')
-        .eq('due_date', todayStr)
-        .neq('status', 'rolled_over')
-        .order('rollover_count', { ascending: false }),
-      supabase.from('contacts').select('*'),
-    ])
-    if (t) setTasks(t.map((x: any) => ({ ...x, tags: (x.task_tags || []).map((tt: any) => tt.tags).filter(Boolean) })))
-    if (c) setContacts(c as Contact[])
+    try {
+      const [{ data: t }, { data: c }] = await Promise.all([
+        supabase.from('tasks')
+          .select('*, task_tags(tag_id, tags(id,name))')
+          .eq('due_date', todayStr)
+          .neq('status', 'rolled_over')
+          .order('rollover_count', { ascending: false }),
+        supabase.from('contacts').select('*'),
+      ])
+      if (t) setTasks(t.map((x: any) => ({ ...x, tags: (x.task_tags || []).map((tt: any) => tt.tags).filter(Boolean) })))
+      if (c) setContacts(c as Contact[])
+    } catch (e) {
+      console.error('[LifeOS] today load error:', e)
+    }
   }, [])
 
   useFocusEffect(useCallback(() => { load() }, [load]))
