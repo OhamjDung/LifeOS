@@ -5,6 +5,7 @@ on:
     branches: [main, master]
     paths:
       - 'mobile/**'
+      - '.github/workflows/build-ios.yml'
   workflow_dispatch:
 
 jobs:
