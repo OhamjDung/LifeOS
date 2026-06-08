@@ -27,7 +27,7 @@ export default function TodayScreen() {
           .order('rollover_count', { ascending: false }),
         supabase.from('contacts').select('*'),
       ])
-      if (t) setTasks(t.map((x: any) => ({ ...x, tags: (x.task_tags || []).map((tt: any) => tt.tags).filter(Boolean) })))
+      if (t) setTasks(t.map((x: any) => ({ ...x, tags: (x.task_tags ?? []).map((tt: any) => tt?.tags).filter(Boolean) })))
       if (c) setContacts(c as Contact[])
     } catch (e) {
       console.error('[LifeOS] today load error:', e)

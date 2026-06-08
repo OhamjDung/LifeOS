@@ -177,7 +177,7 @@ export default function TasksScreen() {
         .order('rollover_count', { ascending: false })
         .order('created_at', { ascending: true })
       if (data) setTasks(data.map((t: any) => ({
-        ...t, tags: (t.task_tags || []).map((tt: any) => tt.tags).filter(Boolean),
+        ...t, tags: (t.task_tags ?? []).map((tt: any) => tt?.tags).filter(Boolean),
       })) as Task[])
     } catch (e) {
       console.error('[LifeOS] fetchTasks error:', e)
