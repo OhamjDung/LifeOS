@@ -14,6 +14,12 @@ import * as SplashScreen from 'expo-splash-screen'
 import { supabase, supabaseUrl } from '../lib/supabase'
 import { runDailyTasksIfNeeded } from '../lib/dailyTasks'
 
+// TOP-LEVEL: fires at module evaluation time, before any React render
+const _BUILD_ID = process.env.EXPO_PUBLIC_BUILD_ID ?? 'local'
+console.log('[LifeOS] ===== MODULE LOADED =====')
+console.log('[LifeOS] BUILD_ID:', _BUILD_ID)
+console.log('[LifeOS] SUPABASE_URL length:', (process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').length)
+
 SplashScreen.preventAutoHideAsync()
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -91,6 +97,9 @@ export default function RootLayout() {
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <Stack screenOptions={{ headerShown: false }} />
+        <Text style={{ position: 'absolute', bottom: 6, right: 8, color: '#ffffff40', fontSize: 9, fontFamily: 'monospace' }} pointerEvents="none">
+          {_BUILD_ID}
+        </Text>
       </GestureHandlerRootView>
     </ErrorBoundary>
   )

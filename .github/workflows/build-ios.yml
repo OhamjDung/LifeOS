@@ -143,6 +143,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             SKIP_INSTALL=NO \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             -destination "generic/platform=iOS" \
             2>&1 | tee /tmp/xcodebuild.log | xcpretty; \
           STATUS=${PIPESTATUS[0]}; \
