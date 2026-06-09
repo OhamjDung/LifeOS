@@ -52,10 +52,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     const urlLen = supabaseUrl?.length ?? 0
-    console.log('[LifeOS] startup — supabaseUrl length:', urlLen, 'starts:', supabaseUrl?.slice(0, 15))
-    if (!supabaseUrl || urlLen < 10) {
-      Alert.alert('⚠️ Config Error', `EXPO_PUBLIC_SUPABASE_URL is missing or empty (length: ${urlLen}). The app won't work.`)
-    }
+    const buildId = process.env.EXPO_PUBLIC_BUILD_ID ?? 'local'
+    console.log('[LifeOS] startup — build:', buildId, 'supabaseUrl length:', urlLen, 'starts:', supabaseUrl?.slice(0, 15))
+    Alert.alert(
+      urlLen < 10 ? '⚠️ Config Error' : '🟢 LifeOS startup',
+      `Build: ${buildId}\nURL length: ${urlLen}${urlLen < 10 ? '\n\nSUPABASE_URL missing — app will not work.' : ''}`,
+    )
 
     supabase.auth.getSession()
       .then(({ data: { session } }) => {

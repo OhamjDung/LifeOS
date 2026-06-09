@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.lifeos.app",
+      "jsEngine": "hermes",
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "LifeOS uses speech recognition to transcribe your voice braindumps.",
         "NSMicrophoneUsageDescription": "LifeOS needs microphone access to record your voice braindumps.",

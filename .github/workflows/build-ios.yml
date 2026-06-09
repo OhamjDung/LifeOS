@@ -56,9 +56,12 @@ jobs:
         run: |
           printf 'EXPO_PUBLIC_SUPABASE_URL=%s\n' "$EXPO_PUBLIC_SUPABASE_URL" > .env
           printf 'EXPO_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$EXPO_PUBLIC_SUPABASE_ANON_KEY" >> .env
+          printf 'EXPO_PUBLIC_BUILD_ID=ci-%s\n' "$(date +%Y%m%d-%H%M%S)" >> .env
           echo "=== env var lengths ==="
           echo "URL chars: ${#EXPO_PUBLIC_SUPABASE_URL}"
           echo "KEY chars: ${#EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+          echo "=== .env contents (keys only) ==="
+          cut -d= -f1 .env
 
       - name: Expo prebuild
         working-directory: mobile
@@ -127,6 +130,7 @@ jobs:
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_BUILD_ID: ci-${{ github.run_number }}
         run: |
           set -o pipefail
           xcodebuild archive \
