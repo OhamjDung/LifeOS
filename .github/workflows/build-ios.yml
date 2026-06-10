@@ -136,7 +136,7 @@ jobs:
           xcodebuild archive \
             -workspace ios/LifeOS.xcworkspace \
             -scheme LifeOS \
-            -configuration Release \
+            -configuration Debug \
             -archivePath $RUNNER_TEMP/LifeOS.xcarchive \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
