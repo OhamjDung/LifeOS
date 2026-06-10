@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { useFocusEffect } from 'expo-router'
 import Constants from 'expo-constants'
 import { supabase, supabaseUrl } from '../../lib/supabase'
+import { log, warn, error as logError } from '../../lib/logger'
 import { SkCard, SkKicker, SkChip } from '../../components/Sk'
 import { T, MONO, raisedShadowSm } from '../../lib/theme'
 
@@ -114,33 +115,55 @@ export default function NotesScreen() {
   }
 
   async function uploadRecording() {
+    log('notes: uploadRecording started')
     setUploading(true)
     try {
       let DocumentPicker: any
-      try { DocumentPicker = require('expo-document-picker') }
-      catch { Alert.alert('Not available', 'Install expo-document-picker'); setUploading(false); return }
+      try {
+        DocumentPicker = require('expo-document-picker')
+        log('notes: expo-document-picker loaded ok')
+      } catch (e: any) {
+        logError(`notes: expo-document-picker require failed: ${e?.message}`)
+        Alert.alert('Not available', 'Install expo-document-picker')
+        setUploading(false)
+        return
+      }
 
       const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true })
+      log(`notes: picker result canceled=${result.canceled}`)
       if (result.canceled || !result.assets?.[0]) { setUploading(false); return }
 
       const asset = result.assets[0]
+      log(`notes: picked file name=${asset.name} type=${asset.mimeType}`)
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setUploading(false); return }
+      if (!user) { warn('notes: no user — aborting upload'); setUploading(false); return }
 
       const ext = asset.name?.split('.').pop() || 'audio'
       const path = `${user.id}/${Date.now()}.${ext}`
       const blob = await (await fetch(asset.uri)).blob()
+      log(`notes: uploading to storage path=${path}`)
 
       const { error } = await supabase.storage.from('recordings')
         .upload(path, blob, { contentType: asset.mimeType || 'audio/*' })
-      if (error) { Alert.alert('Upload failed', error.message); setUploading(false); return }
+      if (error) {
+        logError(`notes: storage upload failed: ${error.message}`)
+        Alert.alert('Upload failed', error.message)
+        setUploading(false)
+        return
+      }
 
+      log('notes: storage upload ok')
       const { data: { publicUrl } } = supabase.storage.from('recordings').getPublicUrl(path)
-      await supabase.from('braindump_jobs').insert({
+      const { error: jobErr } = await supabase.from('braindump_jobs').insert({
         raw_transcript: `[Audio: ${asset.name}]`, audio_url: publicUrl, user_id: user.id,
       })
+      if (jobErr) logError(`notes: braindump_jobs insert failed: ${jobErr.message}`)
+      else log('notes: braindump_jobs insert ok')
       Alert.alert('Uploaded', 'AI will transcribe and extract tasks in ~2 min.')
-    } catch (e: any) { Alert.alert('Error', e?.message || 'Upload failed') }
+    } catch (e: any) {
+      logError(`notes: uploadRecording error: ${e?.message}`)
+      Alert.alert('Error', e?.message || 'Upload failed')
+    }
     setUploading(false)
   }
 

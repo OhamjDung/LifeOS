@@ -1,5 +1,6 @@
 import { Platform } from 'react-native'
 import { supabase } from './supabase'
+import { log, warn, error as logError } from './logger'
 
 const APP_GROUP = 'group.com.lifeos.app'
 const WIDGET_KEY = 'lifeos_widget_data'
@@ -8,7 +9,13 @@ let _prefs: any = null
 function getPrefs() {
   if (Platform.OS !== 'ios') return null
   if (!_prefs) {
-    try { _prefs = require('react-native-shared-group-preferences').default } catch { return null }
+    try {
+      _prefs = require('react-native-shared-group-preferences').default
+      log('widgetSync: SharedGroupPreferences loaded ok')
+    } catch (e: any) {
+      logError(`widgetSync: SharedGroupPreferences require failed: ${e?.message}`)
+      return null
+    }
   }
   return _prefs
 }
@@ -24,11 +31,16 @@ interface WidgetPayload {
 
 async function write(payload: WidgetPayload) {
   const prefs = getPrefs()
-  if (!prefs) return
+  if (!prefs) {
+    warn('widgetSync: no prefs module — skipping write')
+    return
+  }
+  log(`widgetSync: writing tasks=${payload.tasks.length} hasToken=${!!payload.token} group=${APP_GROUP}`)
   try {
     await prefs.setItem(WIDGET_KEY, JSON.stringify(payload), APP_GROUP)
-  } catch (e) {
-    console.warn('[widget] write failed:', e)
+    log('widgetSync: write ok')
+  } catch (e: any) {
+    logError(`widgetSync: write failed: ${e?.message ?? e}`)
   }
 }
 
@@ -37,15 +49,19 @@ async function readExisting(): Promise<WidgetPayload | null> {
   if (!prefs) return null
   try {
     const raw = await prefs.getItem(WIDGET_KEY, APP_GROUP)
-    return raw ? JSON.parse(raw) : null
-  } catch {
+    if (!raw) { log('widgetSync: readExisting — nothing in group yet'); return null }
+    return JSON.parse(raw)
+  } catch (e: any) {
+    logError(`widgetSync: readExisting failed: ${e?.message}`)
     return null
   }
 }
 
 export async function syncWidgetTasks(tasks: any[]) {
   if (Platform.OS !== 'ios') return
+  log(`widgetSync: syncWidgetTasks called tasks=${tasks.length}`)
   const { data: { session } } = await supabase.auth.getSession()
+  log(`widgetSync: session=${session ? 'ok' : 'null'} expires=${session?.expires_at ?? 'n/a'}`)
   await write({
     tasks: tasks.map(t => ({
       id: t.id,
@@ -64,7 +80,8 @@ export async function syncWidgetTasks(tasks: any[]) {
 
 export async function syncWidgetToken(token: string | null, tokenExpiry: number | null) {
   if (Platform.OS !== 'ios') return
+  log(`widgetSync: syncWidgetToken token=${token ? 'present' : 'null'}`)
   const existing = await readExisting()
-  if (!existing) return
+  if (!existing) { warn('widgetSync: no existing data — token not synced'); return }
   await write({ ...existing, token, tokenExpiry, writtenAt: Date.now() / 1000 })
 }

@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Constants from 'expo-constants'
 import { supabase } from '../../lib/supabase'
+import { log, warn, error as logError } from '../../lib/logger'
 
 const IS_EXPO_GO = Constants.appOwnership === 'expo'
 
@@ -58,9 +59,10 @@ export default function ModesScreen() {
     }
 
     const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+    log(`geofence: location acquired lat=${loc.coords.latitude.toFixed(4)} lon=${loc.coords.longitude.toFixed(4)}`)
     const { data: { user } } = await supabase.auth.getUser()
 
-    await supabase.from('location_anchors').insert({
+    const { error: insertErr } = await supabase.from('location_anchors').insert({
       user_id: user?.id,
       label: label.trim(),
       mode,
@@ -68,6 +70,12 @@ export default function ModesScreen() {
       longitude: loc.coords.longitude,
       radius_meters: 150,
     })
+
+    if (insertErr) {
+      logError(`geofence: anchor insert failed: ${insertErr.message}`)
+    } else {
+      log(`geofence: anchor saved label="${label.trim()}" mode=${mode}`)
+    }
 
     setLabel('')
     setSaving(false)
@@ -78,21 +86,45 @@ export default function ModesScreen() {
     let startGeofencing: any
     try {
       startGeofencing = require('../../lib/geofence').startGeofencing
-    } catch {
+    } catch (e: any) {
+      logError(`geofence: startGeofencing require failed: ${e?.message}`)
       Alert.alert('Not available', 'Geofencing requires a dev client build.')
       return
     }
+    log(`geofence: starting with ${anchors.length} anchors`)
     const success = await startGeofencing(anchors)
     if (success) {
       setGeofenceActive(true)
+      log('geofence: active')
       Alert.alert('Geofencing active', 'LifeOS will now auto-switch modes when you arrive at your locations.')
     } else {
+      warn('geofence: start failed — permission not granted')
       Alert.alert('Permission required', 'Allow "Always" location access in Settings to enable auto mode switching.')
     }
   }
 
+  async function deactivateGeofencing() {
+    let stopGeofencing: any
+    try {
+      stopGeofencing = require('../../lib/geofence').stopGeofencing
+    } catch (e: any) {
+      logError(`geofence: stopGeofencing require failed: ${e?.message}`)
+      return
+    }
+    try {
+      await stopGeofencing()
+      setGeofenceActive(false)
+      log('geofence: stopped')
+      Alert.alert('Geofencing stopped', 'Auto mode switching is off.')
+    } catch (e: any) {
+      logError(`geofence: stop failed: ${e?.message}`)
+    }
+  }
+
   async function deleteAnchor(id: string) {
-    await supabase.from('location_anchors').delete().eq('id', id)
+    const { error: delErr } = await supabase.from('location_anchors').delete().eq('id', id)
+    if (delErr) logError(`geofence: deleteAnchor failed: ${delErr.message}`)
+    else log(`geofence: anchor deleted id=${id}`)
     await fetchAnchors()
   }
 
@@ -144,10 +176,10 @@ export default function ModesScreen() {
             {anchors.length > 0 && (
               <TouchableOpacity
                 style={[s.activateBtn, geofenceActive && s.activateBtnOn]}
-                onPress={activateGeofencing}
+                onPress={geofenceActive ? deactivateGeofencing : activateGeofencing}
               >
                 <Text style={s.activateBtnText}>
-                  {geofenceActive ? '✅ Geofencing active' : '▶ Activate auto mode switching'}
+                  {geofenceActive ? '■ Stop geofencing' : '▶ Activate auto mode switching'}
                 </Text>
               </TouchableOpacity>
             )}
