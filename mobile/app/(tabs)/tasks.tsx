@@ -427,11 +427,6 @@ function TaskRow({ task, onToggle, onRollover }: { task: Task; onToggle: () => v
             }
           </View>
         </View>
-        {!done && (
-          <TouchableOpacity onPress={onRollover} style={[ts.rollBtn, raisedShadowSm]}>
-            <Text style={ts.rollBtnText}>→ TMRW</Text>
-          </TouchableOpacity>
-        )}
       </SkCard>
     </Swipeable>
   )

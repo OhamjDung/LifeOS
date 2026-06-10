@@ -24,14 +24,31 @@ struct WTask: Codable, Identifiable {
     var rolloverCount: Int
 }
 
-func loadData() -> WidgetData? {
-    guard
-        let defaults = UserDefaults(suiteName: kAppGroup),
-        let raw = defaults.string(forKey: kWidgetKey),
-        let bytes = raw.data(using: .utf8)
-    else { return nil }
-    return try? JSONDecoder().decode(WidgetData.self, from: bytes)
+struct LoadResult {
+    var data: WidgetData?
+    var defaultsNil: Bool
+    var rawNil: Bool
+    var rawLen: Int
+    var decodeFailed: Bool
 }
+
+func loadDataDetailed() -> LoadResult {
+    guard let defaults = UserDefaults(suiteName: kAppGroup) else {
+        return LoadResult(data: nil, defaultsNil: true, rawNil: true, rawLen: 0, decodeFailed: false)
+    }
+    guard let raw = defaults.string(forKey: kWidgetKey) else {
+        return LoadResult(data: nil, defaultsNil: false, rawNil: true, rawLen: 0, decodeFailed: false)
+    }
+    guard let bytes = raw.data(using: .utf8) else {
+        return LoadResult(data: nil, defaultsNil: false, rawNil: false, rawLen: raw.count, decodeFailed: true)
+    }
+    if let decoded = try? JSONDecoder().decode(WidgetData.self, from: bytes) {
+        return LoadResult(data: decoded, defaultsNil: false, rawNil: false, rawLen: raw.count, decodeFailed: false)
+    }
+    return LoadResult(data: nil, defaultsNil: false, rawNil: false, rawLen: raw.count, decodeFailed: true)
+}
+
+func loadData() -> WidgetData? { loadDataDetailed().data }
 
 func tokenValid(_ data: WidgetData?) -> Bool {
     guard let expiry = data?.tokenExpiry else { return false }
@@ -110,15 +127,21 @@ struct RolloverTaskIntent: AppIntent {
 struct Entry: TimelineEntry {
     let date: Date
     let data: WidgetData?
+    let loadResult: LoadResult
 }
 
 struct Provider: TimelineProvider {
-    func placeholder(in context: Context) -> Entry { Entry(date: .now, data: nil) }
+    func placeholder(in context: Context) -> Entry {
+        let r = LoadResult(data: nil, defaultsNil: false, rawNil: true, rawLen: 0, decodeFailed: false)
+        return Entry(date: .now, data: nil, loadResult: r)
+    }
     func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) {
-        completion(Entry(date: .now, data: loadData()))
+        let r = loadDataDetailed()
+        completion(Entry(date: .now, data: r.data, loadResult: r))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
-        let entry = Entry(date: .now, data: loadData())
+        let r = loadDataDetailed()
+        let entry = Entry(date: .now, data: r.data, loadResult: r)
         let next = Calendar.current.date(byAdding: .minute, value: 15, to: .now)!
         completion(Timeline(entries: [entry], policy: .after(next)))
     }
@@ -169,6 +192,13 @@ struct WidgetView: View {
 
     var agOk: Bool { entry.data != nil }
     var jwtOk: Bool { tokenValid(entry.data) }
+    var debugLine: String {
+        let r = entry.loadResult
+        if r.defaultsNil { return "DEFAULTS-NIL" }
+        if r.rawNil { return "RAW-NIL" }
+        if r.decodeFailed { return "DECODE-FAIL raw=\(r.rawLen)" }
+        return "raw=\(r.rawLen) tasks=\(entry.data?.tasks.count ?? 0)"
+    }
 
     var todayTasks: [WTask] {
         guard let all = entry.data?.tasks else { return [] }
@@ -187,8 +217,8 @@ struct WidgetView: View {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(.secondary)
                 // Risk-test indicators — remove once confirmed working
-                Text(agOk ? "AG✓" : "AG✗")
-                    .font(.system(size: 8, design: .monospaced))
+                Text(debugLine)
+                    .font(.system(size: 7.5, design: .monospaced))
                     .foregroundStyle(agOk ? Color.green : Color.red)
                 Text(jwtOk ? "JWT✓" : "JWT✗")
                     .font(.system(size: 8, design: .monospaced))

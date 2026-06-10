@@ -110,6 +110,8 @@ export default function BraindumpScreen() {
       // onSpeechEnd should fire and commit pending — setListening(false) handled there
     } else {
       try {
+        log('Destroying stale session before start')
+        await Voice.destroy()
         log('Starting voice en-US')
         await Voice.start('en-US'); setListening(true)
       } catch (e: any) {
