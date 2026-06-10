@@ -27,6 +27,7 @@ export default function BraindumpScreen() {
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const pulseScale = useRef(new Animated.Value(1)).current
   const pulseOpacity = useRef(new Animated.Value(0)).current
+  const pendingRef = useRef('')
   const router = useRouter()
 
   useEffect(() => {
@@ -44,15 +45,28 @@ export default function BraindumpScreen() {
       Voice.onSpeechResults = (e: any) => {
         log(`onSpeechResults: ${JSON.stringify(e.value)}`)
         if (e.value?.[0]) {
-          setText(prev => prev ? prev + ' ' + e.value[0] : e.value[0])
-          setPartial('')
+          pendingRef.current = e.value[0]  // overwrite — fires multiple times with cumulative phrase
+          setPartial(e.value[0])
         }
       }
       Voice.onSpeechPartialResults = (e: any) => {
         if (e.value?.[0]) setPartial(e.value[0])
       }
-      Voice.onSpeechEnd = () => { log('onSpeechEnd'); setListening(false); setPartial('') }
-      Voice.onSpeechError = (e: any) => { logError(`onSpeechError: ${JSON.stringify(e)}`); setListening(false); setPartial('') }
+      Voice.onSpeechEnd = () => {
+        log('onSpeechEnd')
+        if (pendingRef.current) {
+          setText(prev => prev ? prev + ' ' + pendingRef.current : pendingRef.current)
+          pendingRef.current = ''
+        }
+        setListening(false)
+        setPartial('')
+      }
+      Voice.onSpeechError = (e: any) => {
+        logError(`onSpeechError: ${JSON.stringify(e)}`)
+        pendingRef.current = ''
+        setListening(false)
+        setPartial('')
+      }
       return () => Voice?.destroy().then(Voice?.removeAllListeners)
     } catch (e: any) {
       logError(`Voice require failed: ${e?.message}`)
@@ -92,7 +106,8 @@ export default function BraindumpScreen() {
     }
     if (listening) {
       log('Stopping voice')
-      await Voice.stop(); setListening(false)
+      await Voice.stop()
+      // onSpeechEnd should fire and commit pending — setListening(false) handled there
     } else {
       try {
         log('Starting voice en-US')

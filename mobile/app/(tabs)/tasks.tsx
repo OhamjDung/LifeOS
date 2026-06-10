@@ -470,7 +470,7 @@ const ts = StyleSheet.create({
   rollBtn:      { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, backgroundColor: T.surface },
   rollBtnText:  { fontFamily: MONO, fontSize: 9, color: T.faint, letterSpacing: 0.5 },
   empty:        { fontFamily: MONO, fontSize: 12, color: T.faint, textAlign: 'center', paddingVertical: 24 },
-  swipe:        { flex: 1, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 18, marginBottom: T.listGap },
+  swipe:        { flex: 1, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 18 },
   swipeDone:    { backgroundColor: '#3D6B4A' },
   swipeRoll:    { backgroundColor: '#3C4E6E' },
   swipeText:    { fontFamily: MONO, fontSize: 11, color: '#EEF0E6', fontWeight: '600', letterSpacing: 0.5 },

@@ -39,6 +39,14 @@ async function write(payload: WidgetPayload) {
   try {
     await prefs.setItem(WIDGET_KEY, JSON.stringify(payload), APP_GROUP)
     log('widgetSync: write ok')
+    // Readback: if App Group is broken by AltStore re-signing, this returns null
+    const raw = await prefs.getItem(WIDGET_KEY, APP_GROUP)
+    if (raw) {
+      const back = JSON.parse(raw)
+      log(`widgetSync: readback ok tasks=${back?.tasks?.length ?? '?'}`)
+    } else {
+      logError('widgetSync: readback EMPTY — App Group not shared (AltStore group ID mismatch)')
+    }
   } catch (e: any) {
     logError(`widgetSync: write failed: ${e?.message ?? e}`)
   }
