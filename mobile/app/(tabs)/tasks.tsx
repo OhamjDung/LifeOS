@@ -9,6 +9,7 @@ import { useFocusEffect } from 'expo-router'
 import Swipeable from 'react-native-gesture-handler/Swipeable'
 import { supabase, supabaseUrl } from '../../lib/supabase'
 import { Task, Tag, CONTACT_TIER_DAYS, ContactTier } from '../../lib/types'
+import { syncWidgetTasks } from '../../lib/widgetSync'
 import { SkCard, SkKicker, SkChip, SkCheck, SkIconBtn, SkTagBadge } from '../../components/Sk'
 import { T, MONO, raisedShadowSm, insetBg } from '../../lib/theme'
 
@@ -176,9 +177,13 @@ export default function TasksScreen() {
         .eq('due_date', todayStr).neq('status', 'rolled_over')
         .order('rollover_count', { ascending: false })
         .order('created_at', { ascending: true })
-      if (data) setTasks(data.map((t: any) => ({
-        ...t, tags: (t.task_tags ?? []).map((tt: any) => tt?.tags).filter(Boolean),
-      })) as Task[])
+      if (data) {
+        const mapped = data.map((t: any) => ({
+          ...t, tags: (t.task_tags ?? []).map((tt: any) => tt?.tags).filter(Boolean),
+        })) as Task[]
+        setTasks(mapped)
+        syncWidgetTasks(mapped).catch(() => {})
+      }
     } catch (e) {
       console.error('[LifeOS] fetchTasks error:', e)
     }

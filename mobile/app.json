@@ -10,6 +10,9 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.lifeos.app",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.lifeos.app"]
+      },
       "jsEngine": "hermes",
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "LifeOS uses speech recognition to transcribe your voice braindumps.",
@@ -43,6 +46,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "@bacons/apple-targets",
       "expo-router",
       "expo-secure-store",
       [

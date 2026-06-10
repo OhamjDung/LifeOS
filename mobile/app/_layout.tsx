@@ -13,6 +13,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen'
 import { supabase, supabaseUrl } from '../lib/supabase'
 import { runDailyTasksIfNeeded } from '../lib/dailyTasks'
+import { syncWidgetToken } from '../lib/widgetSync'
 
 // TOP-LEVEL: fires at module evaluation time, before any React render
 const _BUILD_ID = process.env.EXPO_PUBLIC_BUILD_ID ?? 'local'
@@ -79,6 +80,7 @@ export default function RootLayout() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       console.log('[LifeOS] authStateChange:', _e, 'session:', session ? 'exists' : 'null')
       setSession(session)
+      syncWidgetToken(session?.access_token ?? null, session?.expires_at ?? null).catch(() => {})
       if (session) runDailyTasksIfNeeded().catch(e => console.error('[LifeOS] dailyTasks:', e))
     })
     return () => subscription.unsubscribe()
