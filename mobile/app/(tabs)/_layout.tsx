@@ -102,12 +102,12 @@ const bar = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.04)',
   },
   icon: {
-    fontSize: 18,
-    lineHeight: 22,
+    fontSize: 22,
+    lineHeight: 26,
   },
   label: {
     fontFamily: MONO,
-    fontSize: 7.5,
+    fontSize: 9,
     letterSpacing: 0.5,
     fontWeight: '500',
   },

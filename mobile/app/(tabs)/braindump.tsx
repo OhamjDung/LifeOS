@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Audio } from 'expo-av'
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, Animated,
@@ -28,6 +29,7 @@ export default function BraindumpScreen() {
   const pulseScale = useRef(new Animated.Value(1)).current
   const pulseOpacity = useRef(new Animated.Value(0)).current
   const pendingRef = useRef('')
+  const isStartingRef = useRef(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -109,14 +111,23 @@ export default function BraindumpScreen() {
       await Voice.stop()
       // onSpeechEnd should fire and commit pending — setListening(false) handled there
     } else {
+      if (isStartingRef.current) { log('toggleVoice: already starting, ignoring tap'); return }
+      isStartingRef.current = true
       try {
+        log('Requesting audio permission + configuring session')
+        const perm = await Audio.requestPermissionsAsync()
+        log(`Audio permission: ${perm.status}`)
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
         log('Destroying stale session before start')
         await Voice.destroy()
         log('Starting voice en-US')
-        await Voice.start('en-US'); setListening(true)
+        await Voice.start('en-US')
+        setListening(true)
       } catch (e: any) {
         logError(`Voice.start failed: ${e?.message}`)
         setListening(false)
+      } finally {
+        isStartingRef.current = false
       }
     }
   }
@@ -279,7 +290,7 @@ function WaveBar({ delay }: { delay: number }) {
 const bd = StyleSheet.create({
   safe:   { flex: 1 },
   scroll: { padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap, paddingBottom: 32 },
-  heading: { fontFamily: MONO, fontSize: 26, fontWeight: '600', color: T.ink, marginTop: 4 },
+  heading: { fontFamily: MONO, fontSize: 31, fontWeight: '600', color: T.ink, marginTop: 4 },
   recCard: { padding: 26, alignItems: 'center', gap: 18 },
   pulseRing: {
     position: 'absolute', width: 116, height: 116, borderRadius: 58,
@@ -289,19 +300,19 @@ const bd = StyleSheet.create({
   micInner: { width: 78, height: 78, borderRadius: 39, backgroundColor: T.display, alignItems: 'center', justifyContent: 'center' },
   stopSquare: { width: 26, height: 26, borderRadius: 6, backgroundColor: T.clayFg },
   waveRow: { flexDirection: 'row', alignItems: 'flex-end', height: 32 },
-  recHint: { fontFamily: MONO, fontSize: 11.5, color: T.faint, textAlign: 'center', letterSpacing: 0.5, lineHeight: 18 },
+  recHint: { fontFamily: MONO, fontSize: 14, color: T.faint, textAlign: 'center', letterSpacing: 0.5, lineHeight: 21 },
   partialBox: { backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, maxWidth: '100%' },
-  partialText: { fontFamily: MONO, fontSize: 11, color: T.sageDim, fontStyle: 'italic', lineHeight: 16 },
+  partialText: { fontFamily: MONO, fontSize: 13, color: T.sageDim, fontStyle: 'italic', lineHeight: 19 },
   catRow: { flexDirection: 'row', gap: 9 },
   catChip: { flex: 1, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12, backgroundColor: T.surface, alignItems: 'center', ...raisedShadowSm },
   catChipOn: { backgroundColor: T.display },
-  catLabel: { fontFamily: MONO, fontSize: 11, color: T.faint, letterSpacing: 0.5, fontWeight: '500' },
+  catLabel: { fontFamily: MONO, fontSize: 13, color: T.faint, letterSpacing: 0.5, fontWeight: '500' },
   catLabelOn: { color: T.displayInk },
-  textarea: { fontFamily: MONO, fontSize: 13, color: T.ink, lineHeight: 22, minHeight: 120 },
+  textarea: { fontFamily: MONO, fontSize: 16, color: T.ink, lineHeight: 26, minHeight: 120 },
   submitBtn: { backgroundColor: T.display, borderRadius: 14, paddingVertical: 16, alignItems: 'center', ...raisedShadowSm },
-  submitText: { fontFamily: MONO, fontSize: 13, fontWeight: '600', color: T.displayInk, letterSpacing: 0.5 },
-  hint: { fontFamily: MONO, fontSize: 11, color: T.faint, textAlign: 'center', letterSpacing: 0.5 },
+  submitText: { fontFamily: MONO, fontSize: 16, fontWeight: '600', color: T.displayInk, letterSpacing: 0.5 },
+  hint: { fontFamily: MONO, fontSize: 13, color: T.faint, textAlign: 'center', letterSpacing: 0.5 },
   success: { backgroundColor: '#1A2C1A', borderRadius: 18, padding: 32, alignItems: 'center', marginTop: 16 },
-  successTitle: { fontFamily: MONO, fontSize: 18, fontWeight: '600', color: '#9FE3B0', marginBottom: 8 },
-  successSub: { fontFamily: MONO, fontSize: 12, color: T.faint },
+  successTitle: { fontFamily: MONO, fontSize: 22, fontWeight: '600', color: '#9FE3B0', marginBottom: 8 },
+  successSub: { fontFamily: MONO, fontSize: 14, color: T.faint },
 })

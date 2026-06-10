@@ -48,12 +48,12 @@ export default function LogsScreen() {
 
 const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
-  title: { fontFamily: MONO, fontSize: 13, fontWeight: '700', color: T.ink, letterSpacing: 1 },
+  title: { fontFamily: MONO, fontSize: 16, fontWeight: '700', color: T.ink, letterSpacing: 1 },
   clearBtn: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: T.surface, borderRadius: 8 },
-  clearText: { fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
+  clearText: { fontFamily: MONO, fontSize: 12, color: T.faint, letterSpacing: 0.5 },
   list: { paddingHorizontal: 12, paddingBottom: 32, gap: 2 },
   row: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  ts: { fontFamily: MONO, fontSize: 9.5, color: T.faint, minWidth: 80 },
-  msg: { fontFamily: MONO, fontSize: 10.5, flex: 1, lineHeight: 15 },
-  empty: { fontFamily: MONO, fontSize: 11, color: T.faint, textAlign: 'center', marginTop: 40 },
+  ts: { fontFamily: MONO, fontSize: 11.5, color: T.faint, minWidth: 92 },
+  msg: { fontFamily: MONO, fontSize: 13, flex: 1, lineHeight: 18 },
+  empty: { fontFamily: MONO, fontSize: 13, color: T.faint, textAlign: 'center', marginTop: 40 },
 })

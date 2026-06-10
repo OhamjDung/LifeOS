@@ -147,7 +147,7 @@ const sk = StyleSheet.create({
 
   kicker: {
     fontFamily: MONO,
-    fontSize: 10.5,
+    fontSize: 13,
     letterSpacing: 3,
     color: T.faint,
     textTransform: 'uppercase',
@@ -166,7 +166,7 @@ const sk = StyleSheet.create({
   },
   chipText: {
     fontFamily: MONO,
-    fontSize: 10,
+    fontSize: 12,
     color: T.displayInk,
     letterSpacing: 1,
     fontWeight: '500',
@@ -198,7 +198,7 @@ const sk = StyleSheet.create({
     shadowRadius: 4,
     elevation: 0,
   },
-  checkMark: { color: '#EEF0E6', fontSize: 13, lineHeight: 16, fontWeight: '600' },
+  checkMark: { color: '#EEF0E6', fontSize: 16, lineHeight: 20, fontWeight: '600' },
 
   iconBtn: {
     backgroundColor: T.surface,
@@ -222,7 +222,7 @@ const sk = StyleSheet.create({
   },
   tagBadgeText: {
     fontFamily: MONO,
-    fontSize: 8.5,
+    fontSize: 10,
     color: T.displayInk,
     letterSpacing: 1,
   },

@@ -104,8 +104,8 @@ function CalendarView() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <Text style={cal.monthLabel}>{MONTHS[month].slice(0,3).toUpperCase()} {year}</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <SkIconBtn size={28} onPress={() => navigate(-1)}><Text style={{ color: T.faint, fontSize: 18 }}>‹</Text></SkIconBtn>
-            <SkIconBtn size={28} onPress={() => navigate(1)}><Text style={{ color: T.faint, fontSize: 18 }}>›</Text></SkIconBtn>
+            <SkIconBtn size={32} onPress={() => navigate(-1)}><Text style={{ color: T.faint, fontSize: 22 }}>‹</Text></SkIconBtn>
+            <SkIconBtn size={32} onPress={() => navigate(1)}><Text style={{ color: T.faint, fontSize: 22 }}>›</Text></SkIconBtn>
           </View>
         </View>
         <View style={{ flexDirection: 'row', marginBottom: 4 }}>
@@ -138,12 +138,12 @@ function CalendarView() {
       <SkKicker>{isThisMonth && selectedDay === todayDay ? `Today · ${MONTHS[month].slice(0,3)} ${todayDay}` : `${MONTHS[month].slice(0,3)} ${selectedDay}`}</SkKicker>
       <View style={{ gap: T.listGap }}>
         {selItems.length === 0
-          ? <Text style={{ fontFamily: MONO, fontSize: 12, color: T.faint, textAlign: 'center', paddingVertical: 16 }}>Nothing scheduled.</Text>
+          ? <Text style={{ fontFamily: MONO, fontSize: 14, color: T.faint, textAlign: 'center', paddingVertical: 16 }}>Nothing scheduled.</Text>
           : selItems.map((t, idx) => (
             <SkCard key={t.id || idx} borderLeft={t.task_type === 'event' ? T.sageDim : undefined}
               style={{ paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View style={{ width: 22, height: 22, borderRadius: t.task_type === 'event' ? 6 : 11, backgroundColor: insetBg }} />
-              <Text style={{ fontFamily: MONO, fontSize: 12.5, color: T.ink, fontWeight: '500', flex: 1 }} numberOfLines={1}>{t.title}</Text>
+              <Text style={{ fontFamily: MONO, fontSize: 15, color: T.ink, fontWeight: '500', flex: 1 }} numberOfLines={1}>{t.title}</Text>
             </SkCard>
           ))}
       </View>
@@ -436,54 +436,54 @@ const ts = StyleSheet.create({
   safe:    { flex: 1 },
   scroll:  { padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap, paddingBottom: 32 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  heading: { fontFamily: MONO, fontSize: 26, fontWeight: '600', color: T.ink, marginTop: 4 },
+  heading: { fontFamily: MONO, fontSize: 31, fontWeight: '600', color: T.ink, marginTop: 4 },
   toggle:  { flexDirection: 'row', padding: 4, borderRadius: 999, alignSelf: 'flex-start' },
   toggleBtn:    { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 999 },
   toggleBtnOn:  { backgroundColor: T.display },
-  toggleText:   { fontFamily: MONO, fontSize: 11, color: T.faint, letterSpacing: 0.5 },
+  toggleText:   { fontFamily: MONO, fontSize: 13, color: T.faint, letterSpacing: 0.5 },
   toggleTextOn: { color: T.displayInk, fontWeight: '600' },
   typeBtn:      { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 7, borderWidth: 1, borderColor: T.line },
   typeBtnOn:    { backgroundColor: T.display, borderColor: T.display },
-  typeBtnText:  { fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
+  typeBtnText:  { fontFamily: MONO, fontSize: 12, color: T.faint, letterSpacing: 0.5 },
   typeBtnTextOn: { color: T.displayInk },
   datePickBtn:  { marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 7, borderWidth: 1, borderColor: T.line },
-  datePickText: { fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
+  datePickText: { fontFamily: MONO, fontSize: 12, color: T.faint, letterSpacing: 0.5 },
   tagChip:      { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface },
   tagChipOn:    { backgroundColor: T.display, borderColor: T.display },
-  tagChipText:  { fontFamily: MONO, fontSize: 11, color: T.faint },
+  tagChipText:  { fontFamily: MONO, fontSize: 13, color: T.faint },
   tagChipTextOn: { color: T.displayInk },
   tagAdd:       { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: T.line },
-  tagAddText:   { fontFamily: MONO, fontSize: 11, color: T.faint },
-  tagInput:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: T.sage, color: T.ink, fontSize: 11, minWidth: 80, fontFamily: MONO },
-  addInput:     { flex: 1, fontFamily: MONO, fontSize: 13, color: T.ink, paddingVertical: 10 },
-  addBtn:       { width: 38, height: 38, borderRadius: 12, backgroundColor: T.sage, alignItems: 'center', justifyContent: 'center' },
-  addBtnText:   { color: '#EEF0E6', fontSize: 22, lineHeight: 26 },
-  taskTitle:     { fontFamily: MONO, fontSize: 13, color: T.ink, fontWeight: '500', lineHeight: 18 },
+  tagAddText:   { fontFamily: MONO, fontSize: 13, color: T.faint },
+  tagInput:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: T.sage, color: T.ink, fontSize: 13, minWidth: 80, fontFamily: MONO },
+  addInput:     { flex: 1, fontFamily: MONO, fontSize: 16, color: T.ink, paddingVertical: 10 },
+  addBtn:       { width: 42, height: 42, borderRadius: 12, backgroundColor: T.sage, alignItems: 'center', justifyContent: 'center' },
+  addBtnText:   { color: '#EEF0E6', fontSize: 26, lineHeight: 30 },
+  taskTitle:     { fontFamily: MONO, fontSize: 16, color: T.ink, fontWeight: '500', lineHeight: 22 },
   taskTitleDone: { textDecorationLine: 'line-through', color: T.faint },
-  rollBadge:    { fontFamily: MONO, fontSize: 9, color: T.faint, letterSpacing: 1 },
-  keepInTouch:  { fontFamily: MONO, fontSize: 9, color: T.clay, letterSpacing: 1 },
+  rollBadge:    { fontFamily: MONO, fontSize: 11, color: T.faint, letterSpacing: 1 },
+  keepInTouch:  { fontFamily: MONO, fontSize: 11, color: T.clay, letterSpacing: 1 },
   rollBtn:      { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, backgroundColor: T.surface },
-  rollBtnText:  { fontFamily: MONO, fontSize: 9, color: T.faint, letterSpacing: 0.5 },
-  empty:        { fontFamily: MONO, fontSize: 12, color: T.faint, textAlign: 'center', paddingVertical: 24 },
+  rollBtnText:  { fontFamily: MONO, fontSize: 11, color: T.faint, letterSpacing: 0.5 },
+  empty:        { fontFamily: MONO, fontSize: 14, color: T.faint, textAlign: 'center', paddingVertical: 24 },
   swipe:        { flex: 1, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 18 },
   swipeDone:    { backgroundColor: '#3D6B4A' },
   swipeRoll:    { backgroundColor: '#3C4E6E' },
-  swipeText:    { fontFamily: MONO, fontSize: 11, color: '#EEF0E6', fontWeight: '600', letterSpacing: 0.5 },
+  swipeText:    { fontFamily: MONO, fontSize: 13, color: '#EEF0E6', fontWeight: '600', letterSpacing: 0.5 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   modalBox:     { backgroundColor: T.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  modalTitle:   { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: T.ink, marginBottom: 16 },
+  modalTitle:   { fontFamily: MONO, fontSize: 17, fontWeight: '600', color: T.ink, marginBottom: 16 },
   dateOpt:      { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: T.line, flexDirection: 'row', justifyContent: 'space-between' },
-  dateOptText:  { fontFamily: MONO, fontSize: 14, color: T.ink },
-  dateOptSub:   { fontFamily: MONO, fontSize: 12, color: T.faint },
-  customInput:  { marginTop: 12, borderWidth: 1, borderColor: T.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontFamily: MONO, fontSize: 13, color: T.ink },
+  dateOptText:  { fontFamily: MONO, fontSize: 17, color: T.ink },
+  dateOptSub:   { fontFamily: MONO, fontSize: 14, color: T.faint },
+  customInput:  { marginTop: 12, borderWidth: 1, borderColor: T.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontFamily: MONO, fontSize: 16, color: T.ink },
 })
 
 const cal = StyleSheet.create({
-  monthLabel:  { fontFamily: MONO, fontSize: 13, fontWeight: '600', color: T.ink, letterSpacing: 1 },
-  dayHeader:   { flex: 1, textAlign: 'center', fontFamily: MONO, fontSize: 8.5, color: T.faint, letterSpacing: 0.5 },
+  monthLabel:  { fontFamily: MONO, fontSize: 16, fontWeight: '600', color: T.ink, letterSpacing: 1 },
+  dayHeader:   { flex: 1, textAlign: 'center', fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
   cell:        { width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 9, paddingVertical: 2 },
   cellSel:     { backgroundColor: T.display },
-  dayNumWrap:  { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  dayNumWrap:  { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   dayNumToday: { backgroundColor: T.sage },
-  dayNum:      { fontFamily: MONO, fontSize: 12, color: T.ink },
+  dayNum:      { fontFamily: MONO, fontSize: 14, color: T.ink },
 })

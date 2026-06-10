@@ -224,12 +224,12 @@ export default function NotesScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <Animated.View style={{ transform: [{ scale: pulse }] }}>
                 <TouchableOpacity style={[ns.micBtn, listening && ns.micBtnActive]} onPress={toggleVoice}>
-                  <Text style={{ fontSize: 18, color: listening ? T.clayFg : T.faint }}>
+                  <Text style={{ fontSize: 22, color: listening ? T.clayFg : T.faint }}>
                     {listening ? '■' : '◉'}
                   </Text>
                 </TouchableOpacity>
               </Animated.View>
-              <Text style={{ fontFamily: MONO, fontSize: 12, color: T.faint }}>{listening ? 'Listening…' : 'Tap to dictate'}</Text>
+              <Text style={{ fontFamily: MONO, fontSize: 14, color: T.faint }}>{listening ? 'Listening…' : 'Tap to dictate'}</Text>
             </View>
           )}
           <TextInput style={ns.contentInput} placeholder="Start writing…"
@@ -264,11 +264,11 @@ export default function NotesScreen() {
 
         {/* Search bar — always visible, inset style */}
         <SkCard pressed style={{ paddingHorizontal: 16, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <Text style={{ fontSize: 15, color: T.faint }}>⌕</Text>
+          <Text style={{ fontSize: 18, color: T.faint }}>⌕</Text>
           <TextInput style={ns.searchInput} placeholder="Search what you know…"
             placeholderTextColor={T.faint} value={searchQuery} onChangeText={onSearchChange}
             returnKeyType="search" />
-          {searching && <Text style={{ fontFamily: MONO, fontSize: 11, color: T.faint }}>…</Text>}
+          {searching && <Text style={{ fontFamily: MONO, fontSize: 13, color: T.faint }}>…</Text>}
         </SkCard>
 
         {inSearch && (
@@ -316,26 +316,26 @@ function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
 const ns = StyleSheet.create({
   safe:    { flex: 1 },
   scroll:  { flex: 1, padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap },
-  heading: { fontFamily: MONO, fontSize: 26, fontWeight: '600', color: T.ink, marginTop: 4 },
-  searchInput: { flex: 1, fontFamily: MONO, fontSize: 12.5, color: T.ink },
-  searchLabel: { fontFamily: MONO, fontSize: 10, color: T.faint, letterSpacing: 0.5 },
+  heading: { fontFamily: MONO, fontSize: 31, fontWeight: '600', color: T.ink, marginTop: 4 },
+  searchInput: { flex: 1, fontFamily: MONO, fontSize: 15, color: T.ink },
+  searchLabel: { fontFamily: MONO, fontSize: 12, color: T.faint, letterSpacing: 0.5 },
   catBadge:    { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  catBadgeText: { fontFamily: MONO, fontSize: 8.5, letterSpacing: 1.5, fontWeight: '600' },
-  noteDate:    { fontFamily: MONO, fontSize: 9.5, color: T.faint },
-  noteTitle:   { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: T.ink, marginBottom: 5 },
-  notePreview: { fontFamily: MONO, fontSize: 11, lineHeight: 17, color: T.mute },
+  catBadgeText: { fontFamily: MONO, fontSize: 10, letterSpacing: 1.5, fontWeight: '600' },
+  noteDate:    { fontFamily: MONO, fontSize: 11.5, color: T.faint },
+  noteTitle:   { fontFamily: MONO, fontSize: 17, fontWeight: '600', color: T.ink, marginBottom: 5 },
+  notePreview: { fontFamily: MONO, fontSize: 13, lineHeight: 20, color: T.mute },
   uploadBtn:   { backgroundColor: T.surface, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
-  uploadText:  { fontFamily: MONO, fontSize: 11, color: T.mute },
+  uploadText:  { fontFamily: MONO, fontSize: 13, color: T.mute },
   newBtn:      { backgroundColor: T.display, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 8, marginBottom: 24 },
-  newBtnText:  { fontFamily: MONO, fontSize: 13, fontWeight: '600', color: T.displayInk, letterSpacing: 0.5 },
-  empty:       { fontFamily: MONO, fontSize: 12, color: T.faint, textAlign: 'center', paddingVertical: 24 },
-  backBtn:     { width: 34, height: 34, borderRadius: 10, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
-  detailTitle: { fontFamily: MONO, fontSize: 22, fontWeight: '600', color: T.ink, letterSpacing: -0.4, lineHeight: 28 },
-  detailBody:  { fontFamily: MONO, fontSize: 12.5, lineHeight: 22, color: T.mute },
-  cancelText:  { fontFamily: MONO, fontSize: 14, color: T.faint },
-  saveText:    { fontFamily: MONO, fontSize: 14, fontWeight: '600', color: T.sage },
-  titleInput:  { fontFamily: MONO, fontSize: 20, fontWeight: '600', color: T.ink, borderBottomWidth: 1, borderBottomColor: T.line, paddingBottom: 12 },
-  micBtn:      { width: 44, height: 44, borderRadius: 22, backgroundColor: T.surface, borderWidth: 2, borderColor: T.line, alignItems: 'center', justifyContent: 'center' },
+  newBtnText:  { fontFamily: MONO, fontSize: 16, fontWeight: '600', color: T.displayInk, letterSpacing: 0.5 },
+  empty:       { fontFamily: MONO, fontSize: 14, color: T.faint, textAlign: 'center', paddingVertical: 24 },
+  backBtn:     { width: 38, height: 38, borderRadius: 11, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
+  detailTitle: { fontFamily: MONO, fontSize: 26, fontWeight: '600', color: T.ink, letterSpacing: -0.4, lineHeight: 34 },
+  detailBody:  { fontFamily: MONO, fontSize: 15, lineHeight: 26, color: T.mute },
+  cancelText:  { fontFamily: MONO, fontSize: 17, color: T.faint },
+  saveText:    { fontFamily: MONO, fontSize: 17, fontWeight: '600', color: T.sage },
+  titleInput:  { fontFamily: MONO, fontSize: 24, fontWeight: '600', color: T.ink, borderBottomWidth: 1, borderBottomColor: T.line, paddingBottom: 12 },
+  micBtn:      { width: 48, height: 48, borderRadius: 24, backgroundColor: T.surface, borderWidth: 2, borderColor: T.line, alignItems: 'center', justifyContent: 'center' },
   micBtnActive: { borderColor: T.clay, backgroundColor: '#3A1810' },
-  contentInput: { fontFamily: MONO, fontSize: 15, color: T.ink, lineHeight: 24, minHeight: 160 },
+  contentInput: { fontFamily: MONO, fontSize: 18, color: T.ink, lineHeight: 28, minHeight: 160 },
 })
