@@ -1,12 +1,6 @@
-const { Alert } = require('react-native')
-
-global.ErrorUtils?.setGlobalHandler?.((error: any, isFatal?: boolean) => {
-  if (isFatal) {
-    Alert.alert(
-      'Fatal JS Error',
-      (error?.message ?? 'no message') + '\n\n' + (error?.stack?.slice(0, 500) ?? 'no stack')
-    )
-  }
-})
-
-require('expo-router/entry')
+try {
+  require('expo-router/entry')
+} catch (e: any) {
+  console.error('[LIFEOS_FATAL] message=' + (e?.message ?? 'none'))
+  console.error('[LIFEOS_FATAL] stack=' + (e?.stack ?? 'none'))
+}
