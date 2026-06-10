@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { useRouter } from 'expo-router'
 import Constants from 'expo-constants'
 import { supabase } from '../../lib/supabase'
+import { log, warn, error as logError } from '../../lib/logger'
 import { SkCard, SkKicker, SkCheck } from '../../components/Sk'
 import { T, MONO, SHADOW_DARK_RAISED, SHADOW_LIGHT_RAISED, raisedShadowSm, insetBg } from '../../lib/theme'
 
@@ -18,6 +19,7 @@ const CATS: Category[] = ['Tasks', 'Notes', 'Contacts']
 
 export default function BraindumpScreen() {
   const [text, setText] = useState('')
+  const [partial, setPartial] = useState('')
   const [categories, setCategories] = useState<Category[]>(['Tasks'])
   const [listening, setListening] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -28,17 +30,32 @@ export default function BraindumpScreen() {
   const router = useRouter()
 
   useEffect(() => {
-    if (IS_EXPO_GO) return
+    log(`Braindump mount — IS_EXPO_GO=${IS_EXPO_GO}`)
+    if (IS_EXPO_GO) {
+      warn('Voice disabled in Expo Go — use dev client for mic')
+      return
+    }
     try {
       const Voice = require('@react-native-voice/voice').default
-      Voice.isAvailable().then((a: boolean) => setVoiceAvailable(!!a))
+      Voice.isAvailable().then((a: boolean) => {
+        log(`Voice.isAvailable → ${a}`)
+        setVoiceAvailable(!!a)
+      })
       Voice.onSpeechResults = (e: any) => {
-        if (e.value?.[0]) setText(prev => prev ? prev + ' ' + e.value[0] : e.value[0])
+        log(`onSpeechResults: ${JSON.stringify(e.value)}`)
+        if (e.value?.[0]) {
+          setText(prev => prev ? prev + ' ' + e.value[0] : e.value[0])
+          setPartial('')
+        }
       }
-      Voice.onSpeechEnd = () => setListening(false)
-      Voice.onSpeechError = () => setListening(false)
+      Voice.onSpeechPartialResults = (e: any) => {
+        if (e.value?.[0]) setPartial(e.value[0])
+      }
+      Voice.onSpeechEnd = () => { log('onSpeechEnd'); setListening(false); setPartial('') }
+      Voice.onSpeechError = (e: any) => { logError(`onSpeechError: ${JSON.stringify(e)}`); setListening(false); setPartial('') }
       return () => Voice?.destroy().then(Voice?.removeAllListeners)
-    } catch {
+    } catch (e: any) {
+      logError(`Voice require failed: ${e?.message}`)
       setVoiceAvailable(false)
     }
   }, [])
@@ -64,34 +81,55 @@ export default function BraindumpScreen() {
   }
 
   async function toggleVoice() {
-    if (IS_EXPO_GO) return
+    if (IS_EXPO_GO) {
+      warn('Mic tap ignored — Expo Go, voice not available')
+      return
+    }
     let Voice: any
-    try { Voice = require('@react-native-voice/voice').default } catch { return }
-    if (listening) { await Voice.stop(); setListening(false) }
-    else { try { await Voice.start('en-US'); setListening(true) } catch { setListening(false) } }
+    try { Voice = require('@react-native-voice/voice').default } catch (e: any) {
+      logError(`Voice require in toggleVoice failed: ${e?.message}`)
+      return
+    }
+    if (listening) {
+      log('Stopping voice')
+      await Voice.stop(); setListening(false)
+    } else {
+      try {
+        log('Starting voice en-US')
+        await Voice.start('en-US'); setListening(true)
+      } catch (e: any) {
+        logError(`Voice.start failed: ${e?.message}`)
+        setListening(false)
+      }
+    }
   }
 
   async function handleSubmit() {
     if (!text.trim()) return
+    log(`Submit — cats=${categories.join(',')} text_len=${text.trim().length}`)
     if (listening) {
       try { const V = require('@react-native-voice/voice').default; await V.stop() } catch {}
     }
     setSubmitting(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    log(`Auth user=${user?.id ?? 'null'} err=${authErr?.message ?? 'none'}`)
     const jobs: PromiseLike<any>[] = []
 
     if (categories.includes('Tasks') || categories.includes('Contacts')) {
-      jobs.push(supabase.from('braindump_jobs').insert({
+      const job = supabase.from('braindump_jobs').insert({
         raw_transcript: text.trim(), user_id: user?.id,
         categories: categories.filter(c => c !== 'Notes'),
-      }))
+      }).then(({ error: e }) => { log(`braindump_jobs insert err=${e?.message ?? 'ok'}`) })
+      jobs.push(job)
     }
     if (categories.includes('Notes')) {
-      jobs.push(supabase.from('notes').insert({
+      const job = supabase.from('notes').insert({
         content: text.trim(), user_id: user?.id, source_platform: 'ios',
-      }))
+      }).then(({ error: e }) => { log(`notes insert err=${e?.message ?? 'ok'}`) })
+      jobs.push(job)
     }
     await Promise.all(jobs)
+    log('Submit done')
     setSubmitting(false); setSubmitted(true); setText('')
 
     const dest = categories.includes('Notes') && !categories.includes('Tasks')
@@ -126,11 +164,12 @@ export default function BraindumpScreen() {
                   { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
                 ]} />
                 <TouchableOpacity
-                  onPress={voiceAvailable ? toggleVoice : undefined}
+                  onPress={IS_EXPO_GO ? () => warn('Voice unavailable in Expo Go — needs dev client') : toggleVoice}
                   activeOpacity={0.85}
                   style={[
                     bd.micOuter,
                     listening ? { backgroundColor: insetBg } : { ...SHADOW_LIGHT_RAISED, ...SHADOW_DARK_RAISED },
+                    IS_EXPO_GO && { opacity: 0.45 },
                   ]}
                 >
                   <View style={[bd.micInner, listening && { backgroundColor: T.clay }]}>
@@ -150,12 +189,20 @@ export default function BraindumpScreen() {
                 </View>
               ) : null}
 
+              {listening && partial ? (
+                <View style={bd.partialBox}>
+                  <Text style={bd.partialText}>…{partial}</Text>
+                </View>
+              ) : null}
+
               <Text style={bd.recHint}>
                 {listening
                   ? '● REC — tap to stop'
-                  : voiceAvailable
-                    ? 'Tap to record. Speak freely.'
-                    : 'Type below. Speak after dev client build.'}
+                  : IS_EXPO_GO
+                    ? 'Voice needs dev client. Type below.'
+                    : voiceAvailable
+                      ? 'Tap to record. Speak freely.'
+                      : 'Voice unavailable. Type below.'}
               </Text>
             </SkCard>
 
@@ -226,6 +273,8 @@ const bd = StyleSheet.create({
   stopSquare: { width: 26, height: 26, borderRadius: 6, backgroundColor: T.clayFg },
   waveRow: { flexDirection: 'row', alignItems: 'flex-end', height: 32 },
   recHint: { fontFamily: MONO, fontSize: 11.5, color: T.faint, textAlign: 'center', letterSpacing: 0.5, lineHeight: 18 },
+  partialBox: { backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, maxWidth: '100%' },
+  partialText: { fontFamily: MONO, fontSize: 11, color: T.sageDim, fontStyle: 'italic', lineHeight: 16 },
   catRow: { flexDirection: 'row', gap: 9 },
   catChip: { flex: 1, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12, backgroundColor: T.surface, alignItems: 'center', ...raisedShadowSm },
   catChipOn: { backgroundColor: T.display },

@@ -11,6 +11,8 @@ const ICONS: Record<string, string> = {
   braindump: '◉',
   notes:     '≡',
   contacts:  '○',
+  modes:     '◎',
+  logs:      '▤',
 }
 
 const LABELS: Record<string, string> = {
@@ -19,11 +21,13 @@ const LABELS: Record<string, string> = {
   braindump: 'DUMP',
   notes:     'NOTES',
   contacts:  'PEOPLE',
+  modes:     'MODES',
+  logs:      'LOGS',
 }
 
 function SkTabBar({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets()
-  const TABS = ['today', 'tasks', 'braindump', 'notes', 'contacts']
+  const TABS = ['today', 'tasks', 'braindump', 'notes', 'contacts', 'modes', 'logs']
 
   return (
     <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }}
@@ -64,9 +68,10 @@ export default function TabLayout() {
       <Tabs.Screen name="braindump" />
       <Tabs.Screen name="notes"     />
       <Tabs.Screen name="contacts"  />
+      <Tabs.Screen name="modes"     />
+      <Tabs.Screen name="logs"      />
       <Tabs.Screen name="calendar"  options={{ href: null }} />
       <Tabs.Screen name="search"    options={{ href: null }} />
-      <Tabs.Screen name="modes"     options={{ href: null }} />
     </Tabs>
   )
 }
@@ -87,11 +92,11 @@ const bar = StyleSheet.create({
   },
   item: {
     alignItems: 'center',
-    gap: 3,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 13,
-    minWidth: 52,
+    gap: 2,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    flex: 1,
   },
   itemActive: {
     backgroundColor: 'rgba(0,0,0,0.04)',

@@ -41,6 +41,8 @@ eas build --profile development --platform ios   # build dev client (needs Apple
 
 Env vars in `mobile/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 
+**Known working versions**: `react@19.2.3`, `@types/react@~19.2.0` — `react@19.1.0` caused runtime crashes (fixed by bumping).
+
 **Expo Go limitations** (features requiring EAS dev client build):
 - Voice recording (`@react-native-voice/voice`) — mic button hidden in Expo Go, shown after dev client
 - Background geofencing (`expo-location` background tasks)
