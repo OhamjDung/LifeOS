@@ -1,5 +1,16 @@
 -- Run in Supabase SQL Editor
 
+-- Widget registrations: maps per-device widget UUID → user
+CREATE TABLE IF NOT EXISTS widget_registrations (
+  widget_id text PRIMARY KEY,
+  user_id uuid REFERENCES auth.users NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE widget_registrations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY IF NOT EXISTS "users_own_widget_registrations" ON widget_registrations
+  FOR ALL USING (auth.uid() = user_id);
+
+
 -- New columns on tasks
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT 'task'
   CHECK (task_type IN ('task', 'event'));
