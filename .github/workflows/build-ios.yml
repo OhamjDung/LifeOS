@@ -90,10 +90,10 @@ jobs:
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
               "  end\n"
-              "  # Ensure React + ExpoModulesCore ObjC headers findable by expo-av (EXAV xcframework mode)\n"
+              "  # EXAV (expo-av source build) needs React-Core headers — podspec only declares ExpoModulesCore dep\n"
               "  installer.pods_project.targets.select { |t| t.name == 'EXAV' }.each do |target|\n"
               "    target.build_configurations.each do |config|\n"
-              "      config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) \"${PODS_ROOT}/Headers/Public\" \"${PODS_ROOT}/Headers/Public/ExpoModulesCore\"'\n"
+              "      config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PODS_ROOT)/Headers/Public/React-Core $(PODS_ROOT)/Headers/Public/ExpoModulesCore'\n"
               "    end\n"
               "  end"
           )
