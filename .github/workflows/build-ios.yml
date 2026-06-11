@@ -92,20 +92,18 @@ jobs:
               "  end"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
-          # Force ExpoModulesCore source build so ObjC headers are available to expo-av etc.
-          content = content.replace('use_expo_modules!', '$ExpoUseSources = true\n  use_expo_modules!', 1)
           with open('Podfile', 'w') as f:
               f.write(content)
           print('Podfile patched successfully')
           PYEOF
-          echo "=== Podfile after patch (use_expo_modules section) ==="
-          grep -A2 'ExpoUseSources' Podfile || echo "WARNING: ExpoUseSources not found in Podfile"
           echo "=== Podfile after patch (post_install section) ==="
           awk '/post_install/,/^end/' Podfile | head -30
 
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
+        env:
+          EXPO_USE_SOURCE: '1'
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
