@@ -111,27 +111,20 @@ jobs:
           echo "=== EXAV xcconfig files ==="
           find "Pods/Target Support Files/EXAV" -name "*.xcconfig" 2>/dev/null | head -5 || echo "No EXAV xcconfigs found"
           echo "=== Patching EXAV xcconfigs ==="
-          RCT_HEADER=$(find Pods/Headers/Public -name "RCTBridgeModule.h" 2>/dev/null | head -1)
-          if [ -n "$RCT_HEADER" ]; then
-            RCT_INCLUDE_DIR=$(dirname "$(dirname "$RCT_HEADER")")
-            echo "React include dir: $RCT_INCLUDE_DIR"
-            for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
-                     "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
-              if [ -f "$f" ]; then
-                echo "HEADER_SEARCH_PATHS = \$(inherited) $RCT_INCLUDE_DIR" >> "$f"
-                echo "Patched: $f"
-              fi
-            done
-          else
-            echo "WARNING: RCTBridgeModule.h not found — trying hardcoded React-Core path"
-            for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
-                     "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
-              if [ -f "$f" ]; then
-                echo 'HEADER_SEARCH_PATHS = $(inherited) $(PODS_ROOT)/Headers/Public/React-Core' >> "$f"
-                echo "Patched (fallback): $f"
-              fi
-            done
-          fi
+          for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
+                   "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
+            if [ -f "$f" ]; then
+              echo "=== Before patch: $f ==="
+              grep 'HEADER_SEARCH_PATHS' "$f" || echo "(no HEADER_SEARCH_PATHS line)"
+              # Append React-Core to the EXISTING HEADER_SEARCH_PATHS line (not a new override)
+              # Single-quoted sed expression preserves $(PODS_ROOT) as literal for xcconfig
+              sed -i '' '/^HEADER_SEARCH_PATHS/s|$| $(PODS_ROOT)/Headers/Public/React-Core|' "$f"
+              echo "=== After patch ==="
+              grep 'HEADER_SEARCH_PATHS' "$f"
+            else
+              echo "WARNING: $f not found"
+            fi
+          done
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
