@@ -106,25 +106,52 @@ jobs:
       - name: Patch EXAV xcconfig for React headers
         working-directory: mobile/ios
         run: |
-          echo "=== Locating headers ==="
+          echo "=== Locating React headers ==="
           RCT=$(find Pods/Headers/Public -name "RCTBridgeModule.h" 2>/dev/null | head -1)
-          EXE=$(find Pods/Headers/Public -name "EXEventEmitter.h" 2>/dev/null | head -1)
           echo "RCTBridgeModule.h: ${RCT:-NOT FOUND}"
-          echo "EXEventEmitter.h:  ${EXE:-NOT FOUND}"
-          # Extract pod names from paths like Pods/Headers/Public/<PodName>/...
           REACT_POD=$(echo "$RCT" | awk -F/ 'NF>=4{print $4}')
-          EXMOD_POD=$(echo "$EXE" | awk -F/ 'NF>=4{print $4}')
-          echo "React pod: ${REACT_POD:-unknown} | ExpoModulesCore pod: ${EXMOD_POD:-unknown}"
-          # Build xcconfig-safe paths using $(PODS_ROOT) (literal for Xcode, escaped in bash)
-          REACT_PATH="\$(PODS_ROOT)/Headers/Public/${REACT_POD:-React-Core}"
-          EXMOD_PATH="\$(PODS_ROOT)/Headers/Public/${EXMOD_POD:-ExpoModulesCore}"
-          export EXTRA_HEADERS="${REACT_PATH} ${EXMOD_PATH}"
-          echo "Will append: $EXTRA_HEADERS"
-          echo "=== EXAV xcconfig content ==="
-          find "Pods/Target Support Files/EXAV" -name "*.xcconfig" 2>/dev/null | head -4 || echo "No EXAV xcconfigs"
+          export REACT_HDR_PATH="\$(PODS_ROOT)/Headers/Public/${REACT_POD:-React-Core}"
+          echo "REACT_HDR_PATH: $REACT_HDR_PATH"
+
+          echo "=== Locating ExpoModulesCore headers (xcframework or source) ==="
+          # xcframework: EXEventEmitter.h is inside framework bundle under Pods/
+          EXE_XCF=$(find Pods -name "EXEventEmitter.h" 2>/dev/null | grep -v simulator | head -1)
+          EXE_HDR=$(find Pods/Headers/Public -name "EXEventEmitter.h" 2>/dev/null | head -1)
+          echo "EXEventEmitter.h (xcframework): ${EXE_XCF:-NOT FOUND}"
+          echo "EXEventEmitter.h (source):      ${EXE_HDR:-NOT FOUND}"
+
+          if [ -n "$EXE_XCF" ]; then
+            # Path: Pods/.../ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers/EXEventEmitter.h
+            # Framework container = dirname(dirname(dirname(EXE_XCF))) = dir containing ExpoModulesCore.framework
+            FW_CONTAINER=$(python3 -c "import os,sys; p='$EXE_XCF'; print(os.path.dirname(os.path.dirname(os.path.dirname(p))))")
+            # Convert to $(PODS_ROOT)-relative: strip leading "Pods/"
+            FW_REL=$(echo "$FW_CONTAINER" | sed 's|^Pods/||')
+            export EXMOD_FW_PATH="\$(PODS_ROOT)/${FW_REL}"
+            echo "ExpoModulesCore framework container: $EXMOD_FW_PATH"
+          elif [ -n "$EXE_HDR" ]; then
+            EXMOD_POD=$(echo "$EXE_HDR" | awk -F/ 'NF>=4{print $4}')
+            export EXMOD_FW_PATH=""
+            export EXMOD_HDR_PATH="\$(PODS_ROOT)/Headers/Public/${EXMOD_POD:-ExpoModulesCore}"
+            echo "ExpoModulesCore source headers: $EXMOD_HDR_PATH"
+          else
+            export EXMOD_FW_PATH=""
+            echo "WARNING: EXEventEmitter.h not found anywhere"
+          fi
+
+          echo "=== EXAV xcconfig before patch ==="
+          cat "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null | grep -E 'SEARCH_PATHS' || echo "(no SEARCH_PATHS lines)"
+
           python3 << 'PYEOF'
           import os
-          extra = ' ' + os.environ.get('EXTRA_HEADERS', '$(PODS_ROOT)/Headers/Public/React-Core $(PODS_ROOT)/Headers/Public/ExpoModulesCore')
+
+          react_hdr   = os.environ.get('REACT_HDR_PATH', '$(PODS_ROOT)/Headers/Public/React-Core')
+          exmod_fw    = os.environ.get('EXMOD_FW_PATH', '')
+          exmod_hdr   = os.environ.get('EXMOD_HDR_PATH', '')
+
+          extra_hdr = f' {react_hdr}'
+          if exmod_hdr:
+              extra_hdr += f' {exmod_hdr}'
+
           for cfg in ['debug', 'release']:
               path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
               if not os.path.exists(path):
@@ -132,22 +159,32 @@ jobs:
                   continue
               with open(path) as f:
                   lines = f.readlines()
-              print(f'--- EXAV.{cfg}.xcconfig HEADER_SEARCH_PATHS before ---')
-              print(next((l.rstrip() for l in lines if l.startswith('HEADER_SEARCH_PATHS')), '(none)'))
+
               patched = []
-              found = False
+              found_hdr = False
+              found_fw  = False
               for l in lines:
-                  if l.startswith('HEADER_SEARCH_PATHS') and not found:
-                      patched.append(l.rstrip() + extra + '\n')
-                      found = True
+                  if l.startswith('HEADER_SEARCH_PATHS') and not found_hdr:
+                      patched.append(l.rstrip() + extra_hdr + '\n')
+                      found_hdr = True
+                  elif l.startswith('FRAMEWORK_SEARCH_PATHS') and not found_fw and exmod_fw:
+                      patched.append(l.rstrip() + f' {exmod_fw}' + '\n')
+                      found_fw = True
                   else:
                       patched.append(l)
-              if not found:
-                  patched.append(f'HEADER_SEARCH_PATHS = $(inherited){extra}\n')
+
+              if not found_hdr:
+                  patched.append(f'HEADER_SEARCH_PATHS = $(inherited){extra_hdr}\n')
+              if not found_fw and exmod_fw:
+                  patched.append(f'FRAMEWORK_SEARCH_PATHS = $(inherited) {exmod_fw}\n')
+
               with open(path, 'w') as f:
                   f.writelines(patched)
-              print(f'--- after ---')
-              print(next((l.rstrip() for l in patched if l.startswith('HEADER_SEARCH_PATHS')), '(none)'))
+
+              print(f'--- EXAV.{cfg}.xcconfig SEARCH_PATHS after ---')
+              for l in patched:
+                  if 'SEARCH_PATHS' in l:
+                      print(l.rstrip())
           PYEOF
 
       - name: Debug post-pod-install
