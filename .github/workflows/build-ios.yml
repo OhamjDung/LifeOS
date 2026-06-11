@@ -90,26 +90,48 @@ jobs:
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
               "  end\n"
-              "  # EXAV (expo-av source build) needs React-Core headers — podspec only declares ExpoModulesCore dep\n"
-              "  installer.pods_project.targets.select { |t| t.name == 'EXAV' }.each do |target|\n"
-              "    target.build_configurations.each do |config|\n"
-              "      config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) $(PODS_ROOT)/Headers/Public/React-Core $(PODS_ROOT)/Headers/Public/ExpoModulesCore'\n"
-              "    end\n"
-              "  end"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
           with open('Podfile', 'w') as f:
               f.write(content)
           print('Podfile patched successfully')
           PYEOF
-          echo "=== Podfile ExpoUseSources line ==="
-          grep -n 'ExpoUseSources' Podfile || echo "WARNING: ExpoUseSources not found"
           echo "=== Podfile after patch (post_install section) ==="
-          awk '/post_install/,/^end/' Podfile | head -40
+          awk '/post_install/,/^end/' Podfile | head -30
 
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
+
+      - name: Patch EXAV xcconfig for React headers
+        working-directory: mobile/ios
+        run: |
+          echo "=== Finding RCTBridgeModule.h in Pods/Headers ==="
+          find Pods/Headers -name "RCTBridgeModule.h" 2>/dev/null | head -10 || echo "NOT FOUND in Pods/Headers"
+          echo "=== EXAV xcconfig files ==="
+          find "Pods/Target Support Files/EXAV" -name "*.xcconfig" 2>/dev/null | head -5 || echo "No EXAV xcconfigs found"
+          echo "=== Patching EXAV xcconfigs ==="
+          RCT_HEADER=$(find Pods/Headers/Public -name "RCTBridgeModule.h" 2>/dev/null | head -1)
+          if [ -n "$RCT_HEADER" ]; then
+            RCT_INCLUDE_DIR=$(dirname "$(dirname "$RCT_HEADER")")
+            echo "React include dir: $RCT_INCLUDE_DIR"
+            for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
+                     "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
+              if [ -f "$f" ]; then
+                echo "HEADER_SEARCH_PATHS = \$(inherited) $RCT_INCLUDE_DIR" >> "$f"
+                echo "Patched: $f"
+              fi
+            done
+          else
+            echo "WARNING: RCTBridgeModule.h not found — trying hardcoded React-Core path"
+            for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
+                     "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
+              if [ -f "$f" ]; then
+                echo 'HEADER_SEARCH_PATHS = $(inherited) $(PODS_ROOT)/Headers/Public/React-Core' >> "$f"
+                echo "Patched (fallback): $f"
+              fi
+            done
+          fi
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
