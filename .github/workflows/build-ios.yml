@@ -106,25 +106,49 @@ jobs:
       - name: Patch EXAV xcconfig for React headers
         working-directory: mobile/ios
         run: |
-          echo "=== Finding RCTBridgeModule.h in Pods/Headers ==="
-          find Pods/Headers -name "RCTBridgeModule.h" 2>/dev/null | head -10 || echo "NOT FOUND in Pods/Headers"
-          echo "=== EXAV xcconfig files ==="
-          find "Pods/Target Support Files/EXAV" -name "*.xcconfig" 2>/dev/null | head -5 || echo "No EXAV xcconfigs found"
-          echo "=== Patching EXAV xcconfigs ==="
-          for f in "Pods/Target Support Files/EXAV/EXAV.debug.xcconfig" \
-                   "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"; do
-            if [ -f "$f" ]; then
-              echo "=== Before patch: $f ==="
-              grep 'HEADER_SEARCH_PATHS' "$f" || echo "(no HEADER_SEARCH_PATHS line)"
-              # Append React-Core to the EXISTING HEADER_SEARCH_PATHS line (not a new override)
-              # Single-quoted sed expression preserves $(PODS_ROOT) as literal for xcconfig
-              sed -i '' '/^HEADER_SEARCH_PATHS/s|$| $(PODS_ROOT)/Headers/Public/React-Core|' "$f"
-              echo "=== After patch ==="
-              grep 'HEADER_SEARCH_PATHS' "$f"
-            else
-              echo "WARNING: $f not found"
-            fi
-          done
+          echo "=== Locating headers ==="
+          RCT=$(find Pods/Headers/Public -name "RCTBridgeModule.h" 2>/dev/null | head -1)
+          EXE=$(find Pods/Headers/Public -name "EXEventEmitter.h" 2>/dev/null | head -1)
+          echo "RCTBridgeModule.h: ${RCT:-NOT FOUND}"
+          echo "EXEventEmitter.h:  ${EXE:-NOT FOUND}"
+          # Extract pod names from paths like Pods/Headers/Public/<PodName>/...
+          REACT_POD=$(echo "$RCT" | awk -F/ 'NF>=4{print $4}')
+          EXMOD_POD=$(echo "$EXE" | awk -F/ 'NF>=4{print $4}')
+          echo "React pod: ${REACT_POD:-unknown} | ExpoModulesCore pod: ${EXMOD_POD:-unknown}"
+          # Build xcconfig-safe paths using $(PODS_ROOT) (literal for Xcode, escaped in bash)
+          REACT_PATH="\$(PODS_ROOT)/Headers/Public/${REACT_POD:-React-Core}"
+          EXMOD_PATH="\$(PODS_ROOT)/Headers/Public/${EXMOD_POD:-ExpoModulesCore}"
+          export EXTRA_HEADERS="${REACT_PATH} ${EXMOD_PATH}"
+          echo "Will append: $EXTRA_HEADERS"
+          echo "=== EXAV xcconfig content ==="
+          find "Pods/Target Support Files/EXAV" -name "*.xcconfig" 2>/dev/null | head -4 || echo "No EXAV xcconfigs"
+          python3 << 'PYEOF'
+          import os
+          extra = ' ' + os.environ.get('EXTRA_HEADERS', '$(PODS_ROOT)/Headers/Public/React-Core $(PODS_ROOT)/Headers/Public/ExpoModulesCore')
+          for cfg in ['debug', 'release']:
+              path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
+              if not os.path.exists(path):
+                  print(f'WARNING: {path} not found')
+                  continue
+              with open(path) as f:
+                  lines = f.readlines()
+              print(f'--- EXAV.{cfg}.xcconfig HEADER_SEARCH_PATHS before ---')
+              print(next((l.rstrip() for l in lines if l.startswith('HEADER_SEARCH_PATHS')), '(none)'))
+              patched = []
+              found = False
+              for l in lines:
+                  if l.startswith('HEADER_SEARCH_PATHS') and not found:
+                      patched.append(l.rstrip() + extra + '\n')
+                      found = True
+                  else:
+                      patched.append(l)
+              if not found:
+                  patched.append(f'HEADER_SEARCH_PATHS = $(inherited){extra}\n')
+              with open(path, 'w') as f:
+                  f.writelines(patched)
+              print(f'--- after ---')
+              print(next((l.rstrip() for l in patched if l.startswith('HEADER_SEARCH_PATHS')), '(none)'))
+          PYEOF
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
