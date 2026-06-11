@@ -19,10 +19,11 @@ interface SkCardProps {
   style?: ViewStyle
   pressed?: boolean
   onPress?: () => void
+  onLongPress?: () => void
   borderLeft?: string
 }
 
-export function SkCard({ children, style, pressed, onPress, borderLeft }: SkCardProps) {
+export function SkCard({ children, style, pressed, onPress, onLongPress, borderLeft }: SkCardProps) {
   const inner = (
     <View style={[sk.cardLightWrap, pressed && { ...SHADOW_LIGHT_RAISED, shadowOpacity: 0 }]}>
       <View style={[
@@ -36,8 +37,8 @@ export function SkCard({ children, style, pressed, onPress, borderLeft }: SkCard
     </View>
   )
 
-  if (onPress) {
-    return <TouchableOpacity onPress={onPress} activeOpacity={0.85}>{inner}</TouchableOpacity>
+  if (onPress || onLongPress) {
+    return <TouchableOpacity onPress={onPress} onLongPress={onLongPress} activeOpacity={0.85}>{inner}</TouchableOpacity>
   }
   return inner
 }

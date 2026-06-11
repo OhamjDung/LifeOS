@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, LayoutAnimation } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useFocusEffect, useRouter } from 'expo-router'
@@ -55,11 +55,15 @@ export default function TodayScreen() {
 
   async function toggleTask(id: string, status: string) {
     const next = status === 'done' ? 'pending' : 'done'
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+    setTasks(prev => prev.filter(t => t.id !== id))
     await supabase.from('tasks').update({ status: next }).eq('id', id)
     load()
   }
 
   async function rolloverTask(task: Task) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+    setTasks(prev => prev.filter(t => t.id !== task.id))
     const next = new Date(task.due_date); next.setDate(next.getDate() + 1)
     const nextStr = next.toISOString().split('T')[0]
     await supabase.from('tasks').update({ due_date: nextStr, status: 'rolled_over', updated_at: new Date().toISOString() }).eq('id', task.id)

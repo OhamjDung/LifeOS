@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Alert, Modal, ScrollView,
+  StyleSheet, Alert, Modal, ScrollView, LayoutAnimation,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -163,8 +163,9 @@ export default function TasksScreen() {
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [showDateModal, setShowDateModal] = useState(false)
-  const [customDate, setCustomDate] = useState('')
   const [view, setView] = useState<'list' | 'cal'>('list')
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [editTitle, setEditTitle] = useState('')
   const [tabFilter, setTabFilter] = useState<'ongoing' | 'done'>('ongoing')
 
   const fetchTasks = useCallback(async () => {
@@ -256,15 +257,26 @@ export default function TasksScreen() {
 
   async function toggleTask(task: Task) {
     const next = task.status === 'done' ? 'pending' : 'done'
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+    setTasks(prev => prev.filter(t => t.id !== task.id))
     await supabase.from('tasks').update({ status: next, updated_at: new Date().toISOString() }).eq('id', task.id)
     fetchTasks()
   }
 
   async function rollover(task: Task) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+    setTasks(prev => prev.filter(t => t.id !== task.id))
     const next = new Date(task.due_date); next.setDate(next.getDate() + 1)
     const nextStr = next.toISOString().split('T')[0]
     await supabase.from('tasks').update({ due_date: nextStr, status: 'rolled_over', updated_at: new Date().toISOString() }).eq('id', task.id)
     await supabase.from('task_rollovers').insert({ task_id: task.id, from_date: task.due_date, to_date: nextStr })
+    fetchTasks()
+  }
+
+  async function saveTaskEdit() {
+    if (!editingTask || !editTitle.trim()) return
+    await supabase.from('tasks').update({ title: editTitle.trim(), updated_at: new Date().toISOString() }).eq('id', editingTask.id)
+    setEditingTask(null); setEditTitle('')
     fetchTasks()
   }
 
@@ -333,7 +345,8 @@ export default function TasksScreen() {
                 <Text style={ts.empty}>Nothing here yet.</Text>
               )}
               {displayList.map(t => (
-                <TaskRow key={t.id} task={t} onToggle={() => toggleTask(t)} onRollover={() => rollover(t)} />
+                <TaskRow key={t.id} task={t} onToggle={() => toggleTask(t)} onRollover={() => rollover(t)}
+                  onEdit={() => { setEditingTask(t); setEditTitle(t.title) }} />
               ))}
             </View>
           </>
@@ -343,7 +356,7 @@ export default function TasksScreen() {
 
       <Modal visible={showDateModal} transparent animationType="slide">
         <View style={ts.modalOverlay}>
-          <View style={ts.modalBox}>
+          <ScrollView style={ts.modalBox} contentContainerStyle={{ paddingBottom: 8 }}>
             <Text style={ts.modalTitle}>Schedule for</Text>
             {[{ label: 'Today', days: 0 }, { label: 'Tomorrow', days: 1 },
               { label: 'Day after tomorrow', days: 2 }, { label: 'Next week', days: 7 }].map(({ label, days }) => {
@@ -356,17 +369,31 @@ export default function TasksScreen() {
                 </TouchableOpacity>
               )
             })}
-            <TextInput style={ts.customInput} placeholder="Custom (YYYY-MM-DD)"
-              placeholderTextColor={T.faint} value={customDate} onChangeText={setCustomDate}
-              returnKeyType="done"
-              onSubmitEditing={() => {
-                if (/^\d{4}-\d{2}-\d{2}$/.test(customDate)) {
-                  setNewDate(customDate); setCustomDate(''); setShowDateModal(false)
-                }
-              }} />
-            <TouchableOpacity onPress={() => setShowDateModal(false)} style={{ marginTop: 16, alignItems: 'center' }}>
+            <MiniCalendar value={newDate} onChange={(d) => { setNewDate(d); setShowDateModal(false) }} />
+            <TouchableOpacity onPress={() => setShowDateModal(false)} style={{ marginTop: 20, alignItems: 'center' }}>
               <Text style={{ fontFamily: MONO, fontSize: 14, color: T.sage }}>Cancel</Text>
             </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={!!editingTask} transparent animationType="slide">
+        <View style={ts.modalOverlay}>
+          <View style={ts.modalBox}>
+            <Text style={ts.modalTitle}>Edit task</Text>
+            <TextInput style={ts.customInput} value={editTitle} onChangeText={setEditTitle}
+              autoFocus returnKeyType="done" onSubmitEditing={saveTaskEdit} />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+              <TouchableOpacity onPress={() => { setEditingTask(null); setEditTitle('') }}
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}>
+                <Text style={{ fontFamily: MONO, fontSize: 14, color: T.faint }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveTaskEdit} disabled={!editTitle.trim()}
+                style={[{ flex: 1, alignItems: 'center', paddingVertical: 12, backgroundColor: T.sage, borderRadius: 10 },
+                  !editTitle.trim() && { opacity: 0.4 }]}>
+                <Text style={{ fontFamily: MONO, fontSize: 14, fontWeight: '600', color: '#EEF0E6' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -375,9 +402,69 @@ export default function TasksScreen() {
   )
 }
 
+// ── Mini calendar date picker ─────────────────────────────────
+
+function MiniCalendar({ value, onChange }: { value: string; onChange: (d: string) => void }) {
+  const [year, setYear] = useState(() => {
+    const d = value ? new Date(value + 'T00:00') : new Date(); return d.getFullYear()
+  })
+  const [month, setMonth] = useState(() => {
+    const d = value ? new Date(value + 'T00:00') : new Date(); return d.getMonth()
+  })
+
+  function navigate(dir: -1 | 1) {
+    const d = new Date(year, month + dir); setYear(d.getFullYear()); setMonth(d.getMonth())
+  }
+
+  const daysInM = new Date(year, month + 1, 0).getDate()
+  const firstDOW = new Date(year, month, 1).getDay()
+  const cells: (number | null)[] = [...Array(firstDOW).fill(null), ...Array.from({ length: daysInM }, (_, i) => i + 1)]
+  while (cells.length % 7) cells.push(null)
+
+  return (
+    <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: T.line, paddingTop: 14 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <TouchableOpacity onPress={() => navigate(-1)}>
+          <Text style={{ color: T.faint, fontSize: 22, paddingHorizontal: 8 }}>‹</Text>
+        </TouchableOpacity>
+        <Text style={{ fontFamily: MONO, fontSize: 15, fontWeight: '600', color: T.ink }}>{MONTHS[month]} {year}</Text>
+        <TouchableOpacity onPress={() => navigate(1)}>
+          <Text style={{ color: T.faint, fontSize: 22, paddingHorizontal: 8 }}>›</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={{ flexDirection: 'row', marginBottom: 4 }}>
+        {['S','M','T','W','T','F','S'].map((d, i) => (
+          <Text key={i} style={{ flex: 1, textAlign: 'center', fontFamily: MONO, fontSize: 10, color: T.faint }}>{d}</Text>
+        ))}
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {cells.map((day, i) => {
+          if (!day) return <View key={i} style={{ width: '14.28%', aspectRatio: 1 }} />
+          const dateStr = `${year}-${pad(month + 1)}-${pad(day)}`
+          const isSel = dateStr === value
+          const isToday = dateStr === todayStr
+          return (
+            <TouchableOpacity key={i} onPress={() => onChange(dateStr)}
+              style={{ width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={[
+                { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+                isSel && { backgroundColor: T.display },
+                isToday && !isSel && { backgroundColor: T.sage },
+              ]}>
+                <Text style={{ fontFamily: MONO, fontSize: 14,
+                  color: isSel ? T.displayInk : isToday ? '#fff' : T.ink }}>{day}</Text>
+              </View>
+            </TouchableOpacity>
+          )
+        })}
+      </View>
+    </View>
+  )
+}
+
 // ── Task row ──────────────────────────────────────────────────
 
-function TaskRow({ task, onToggle, onRollover }: { task: Task; onToggle: () => void; onRollover: () => void }) {
+function TaskRow({ task, onToggle, onRollover, onEdit }: { task: Task; onToggle: () => void; onRollover: () => void; onEdit: () => void }) {
   const swipeRef = useRef<Swipeable>(null)
   const done = task.status === 'done'
   const isEvent = task.task_type === 'event'
@@ -410,6 +497,7 @@ function TaskRow({ task, onToggle, onRollover }: { task: Task; onToggle: () => v
       overshootLeft={false} overshootRight={false}
     >
       <SkCard
+        onLongPress={onEdit}
         borderLeft={borderColor}
         style={{ paddingHorizontal: 14, paddingVertical: T.cardPadY, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: done ? 0.6 : 1 }}
       >

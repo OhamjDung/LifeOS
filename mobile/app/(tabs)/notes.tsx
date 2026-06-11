@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Animated, Alert,
+  StyleSheet, Animated, Alert, ScrollView,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -34,6 +34,10 @@ export default function NotesScreen() {
   const [content, setContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [editingNote, setEditingNote] = useState(false)
+  const [editNoteTitle, setEditNoteTitle] = useState('')
+  const [editNoteContent, setEditNoteContent] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [listening, setListening] = useState(false)
   const pulse = useRef(new Animated.Value(1)).current
@@ -89,7 +93,14 @@ export default function NotesScreen() {
         body: JSON.stringify({ query: q }),
       })
       const json = await resp.json()
-      if (json.results) setSearchResults(json.results as Note[])
+      if (json.results) setSearchResults(json.results.map((r: any) => ({
+        id: r.note_id,
+        title: r.title ?? null,
+        content: r.chunk_text ?? '',
+        category: null,
+        processing_status: 'done',
+        created_at: '',
+      })))
     } catch {}
     setSearching(false)
   }
@@ -100,6 +111,19 @@ export default function NotesScreen() {
     try { Voice = require('@react-native-voice/voice').default } catch { return }
     if (listening) { await Voice.stop(); setListening(false) }
     else { try { await Voice.start('en-US'); setListening(true) } catch { setListening(false) } }
+  }
+
+  async function saveNoteEdit() {
+    if (!selectedNote) return
+    setSavingEdit(true)
+    await supabase.from('notes').update({
+      title: editNoteTitle.trim() || null,
+      content: editNoteContent.trim(),
+    }).eq('id', selectedNote.id)
+    setSelectedNote({ ...selectedNote, title: editNoteTitle.trim() || null, content: editNoteContent.trim() })
+    setEditingNote(false)
+    setSavingEdit(false)
+    fetchNotes()
   }
 
   async function saveNote() {
@@ -176,26 +200,51 @@ export default function NotesScreen() {
     return (
       <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
       <SafeAreaView style={ns.safe}>
-        <View style={ns.scroll}>
-          <TouchableOpacity onPress={() => setSelectedNote(null)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={[ns.backBtn, raisedShadowSm]}>
-              <Text style={{ color: T.faint, fontSize: 16 }}>‹</Text>
-            </View>
-            <SkKicker>Notes</SkKicker>
-          </TouchableOpacity>
-          {selectedNote.category && (
+        <ScrollView contentContainerStyle={ns.scrollContent} keyboardShouldPersistTaps="handled">
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity onPress={() => { setSelectedNote(null); setEditingNote(false) }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={[ns.backBtn, raisedShadowSm]}>
+                <Text style={{ color: T.faint, fontSize: 16 }}>‹</Text>
+              </View>
+              <SkKicker>Notes</SkKicker>
+            </TouchableOpacity>
+            {editingNote ? (
+              <TouchableOpacity onPress={saveNoteEdit} disabled={!editNoteContent.trim() || savingEdit}>
+                <Text style={[ns.saveText, (!editNoteContent.trim() || savingEdit) && { opacity: 0.4 }]}>
+                  {savingEdit ? 'Saving…' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => { setEditNoteTitle(selectedNote.title || ''); setEditNoteContent(selectedNote.content); setEditingNote(true) }}>
+                <Text style={ns.saveText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {selectedNote.category && !editingNote && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <View style={[ns.catBadge, { backgroundColor: T.display }]}>
                 <Text style={[ns.catBadgeText, { color: catColor }]}>{selectedNote.category.toUpperCase()}</Text>
               </View>
-              <Text style={ns.noteDate}>{new Date(selectedNote.created_at).toLocaleDateString()}</Text>
+              <Text style={ns.noteDate}>{selectedNote.created_at ? new Date(selectedNote.created_at).toLocaleDateString() : ''}</Text>
             </View>
           )}
-          <Text style={ns.detailTitle}>{selectedNote.title || 'Untitled'}</Text>
-          <SkCard style={{ padding: 18 }}>
-            <Text style={ns.detailBody}>{selectedNote.content}</Text>
-          </SkCard>
-        </View>
+          {editingNote ? (
+            <>
+              <TextInput style={ns.titleInput} placeholder="Title (optional)"
+                placeholderTextColor={T.faint} value={editNoteTitle} onChangeText={setEditNoteTitle} />
+              <TextInput style={ns.contentInput} value={editNoteContent} onChangeText={setEditNoteContent}
+                multiline textAlignVertical="top" autoFocus />
+            </>
+          ) : (
+            <>
+              <Text style={ns.detailTitle}>{selectedNote.title || 'Untitled'}</Text>
+              <SkCard style={{ padding: 18 }}>
+                <Text style={ns.detailBody}>{selectedNote.content}</Text>
+              </SkCard>
+            </>
+          )}
+        </ScrollView>
       </SafeAreaView>
       </LinearGradient>
     )
@@ -206,7 +255,7 @@ export default function NotesScreen() {
     return (
       <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
       <SafeAreaView style={ns.safe}>
-        <View style={ns.scroll}>
+        <ScrollView contentContainerStyle={ns.scrollContent} keyboardShouldPersistTaps="handled">
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <TouchableOpacity onPress={() => { setComposing(false); setTitle(''); setContent('') }}>
               <Text style={ns.cancelText}>Cancel</Text>
@@ -235,7 +284,7 @@ export default function NotesScreen() {
           <TextInput style={ns.contentInput} placeholder="Start writing…"
             placeholderTextColor={T.faint} value={content} onChangeText={setContent}
             multiline autoFocus={!voiceAvailable} textAlignVertical="top" />
-        </View>
+        </ScrollView>
       </SafeAreaView>
       </LinearGradient>
     )
@@ -245,7 +294,7 @@ export default function NotesScreen() {
   return (
     <LinearGradient colors={[T.bg, T.bg2]} start={{ x: 0.32, y: 0 }} end={{ x: 0.68, y: 1 }} style={{ flex: 1 }}>
     <SafeAreaView style={ns.safe}>
-      <View style={ns.scroll}>
+      <ScrollView contentContainerStyle={ns.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
         {/* Header */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -289,7 +338,7 @@ export default function NotesScreen() {
           <Text style={ns.newBtnText}>+ New note</Text>
         </TouchableOpacity>
 
-      </View>
+      </ScrollView>
     </SafeAreaView>
     </LinearGradient>
   )
@@ -316,6 +365,7 @@ function NoteCard({ note, onPress }: { note: Note; onPress: () => void }) {
 const ns = StyleSheet.create({
   safe:    { flex: 1 },
   scroll:  { flex: 1, padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap },
+  scrollContent: { padding: T.padX, paddingTop: T.topPad - 30, gap: T.gap, paddingBottom: 32 },
   heading: { fontFamily: MONO, fontSize: 31, fontWeight: '600', color: T.ink, marginTop: 4 },
   searchInput: { flex: 1, fontFamily: MONO, fontSize: 15, color: T.ink },
   searchLabel: { fontFamily: MONO, fontSize: 12, color: T.faint, letterSpacing: 0.5 },
