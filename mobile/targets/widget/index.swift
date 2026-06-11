@@ -190,7 +190,7 @@ struct TaskRowView: View {
                 Button(intent: RolloverTaskIntent(taskId: task.id, widgetId: widgetId)) {
                     Image(systemName: "arrow.right")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.tertiary)
+                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
             }
