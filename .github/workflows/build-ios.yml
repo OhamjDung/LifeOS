@@ -101,8 +101,6 @@ jobs:
               "  end"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
-          # Force expo-av to build from full source so its ObjC files compile with correct header paths
-          content = content.replace('use_expo_modules!', "$ExpoUseSources = ['expo-av']\n  use_expo_modules!", 1)
           with open('Podfile', 'w') as f:
               f.write(content)
           print('Podfile patched successfully')
@@ -115,8 +113,6 @@ jobs:
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
-        env:
-          EXPO_USE_SOURCE: '1'
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
