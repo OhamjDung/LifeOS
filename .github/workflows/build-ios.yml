@@ -106,11 +106,12 @@ jobs:
       - name: Fix ExpoModulesCore headers for prebuilt xcframework
         working-directory: mobile/ios
         run: |
-          # ExpoModulesCore ships as a prebuilt xcframework; CocoaPods skips creating
-          # Pods/Headers/Public/ExpoModulesCore/ for xcframeworks. EXAV.h uses
-          # #import <ExpoModulesCore/EXEventEmitter.h> which needs that directory to exist.
-          # Fix: copy the device-slice headers into the standard public-headers location.
-          # EXAV's xcconfig already has "${PODS_ROOT}/Headers/Public" in HEADER_SEARCH_PATHS.
+          # ExpoModulesCore ships as prebuilt xcframework — CocoaPods skips the normal
+          # Pods/Headers/Public/ExpoModulesCore/ tree. EXAV uses
+          # #import <ExpoModulesCore/EXEventEmitter.h> which needs that directory.
+          # Strategy: (1) find xcframework device-slice Headers dir, (2) recursively
+          # copy ALL .h files (flattened) so subdirectory headers aren't missed,
+          # (3) fall back to node_modules source for any file still absent.
           echo "=== Locating ExpoModulesCore xcframework device headers ==="
           XCF_HDR=$(find Pods/ExpoModulesCore -type d -name "Headers" \
             -path "*/ios-arm64/ExpoModulesCore.framework/Headers" 2>/dev/null | head -1)
@@ -120,15 +121,28 @@ jobs:
               ! -path "*simulator*" 2>/dev/null | head -1)
             echo "Fallback (non-simulator): ${XCF_HDR:-NOT FOUND}"
           fi
-          if [ -z "$XCF_HDR" ]; then
-            echo "ERROR: cannot find ExpoModulesCore xcframework headers"
-            find Pods/ExpoModulesCore -name "*.h" 2>/dev/null | head -10
-            exit 1
-          fi
           mkdir -p Pods/Headers/Public/ExpoModulesCore
-          cp "$XCF_HDR"/*.h Pods/Headers/Public/ExpoModulesCore/
-          echo "Copied $(ls Pods/Headers/Public/ExpoModulesCore/ | wc -l) headers"
-          ls Pods/Headers/Public/ExpoModulesCore/EXEventEmitter.h && echo "EXEventEmitter.h OK" || { echo "EXEventEmitter.h MISSING"; exit 1; }
+          if [ -n "$XCF_HDR" ]; then
+            # Flatten all .h files from every subdirectory of the xcframework Headers dir
+            find "$XCF_HDR" -name "*.h" -exec cp {} Pods/Headers/Public/ExpoModulesCore/ \;
+            echo "Copied from xcframework: $(ls Pods/Headers/Public/ExpoModulesCore/ | wc -l) headers"
+          else
+            echo "WARNING: xcframework headers dir not found — will rely on node_modules fallback"
+          fi
+          # Fallback: source any missing headers from node_modules expo-modules-core
+          for WANTED in EXEventEmitter.h EXExportedModule.h EXModuleRegistryConsumer.h EXUtilities.h; do
+            if [ ! -f "Pods/Headers/Public/ExpoModulesCore/$WANTED" ]; then
+              SRC=$(find ../node_modules/expo-modules-core/ios -name "$WANTED" 2>/dev/null | head -1)
+              if [ -n "$SRC" ]; then
+                cp "$SRC" Pods/Headers/Public/ExpoModulesCore/
+                echo "Fallback copy from node_modules: $WANTED"
+              else
+                echo "WARNING: $WANTED not found anywhere — build may fail"
+              fi
+            fi
+          done
+          echo "=== Final header count: $(ls Pods/Headers/Public/ExpoModulesCore/ | wc -l) ==="
+          ls Pods/Headers/Public/ExpoModulesCore/EXEventEmitter.h && echo "EXEventEmitter.h OK" || { echo "EXEventEmitter.h MISSING after all fallbacks"; exit 1; }
 
       - name: Debug post-pod-install
         working-directory: mobile/ios

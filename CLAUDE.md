@@ -135,21 +135,29 @@ web/components/
 ```
 mobile/app/
   _layout.tsx                    # root layout — auth guard, session listener
-  index.tsx                      # redirect to /(tabs)/tasks
+  index.tsx                      # redirect to /(tabs)/today
   (auth)/login.tsx
-  (tabs)/_layout.tsx             # tab bar: Tasks, Braindump, Notes, Contacts, Search, Modes
-  (tabs)/tasks.tsx               # today's tasks, auto-rollover, event type, date picker, rollover badges
+  (tabs)/_layout.tsx             # tab bar: Today, Tasks, Dump, Notes, People, Modes, Logs
+  (tabs)/today.tsx               # today's tasks + overdue contacts dashboard
+  (tabs)/tasks.tsx               # all tasks, auto-rollover, event type, date picker, rollover badges
   (tabs)/braindump.tsx           # text + voice braindump (voice: mic hidden in Expo Go, shown in dev client)
   (tabs)/notes.tsx               # notes list + compose (text + voice recording)
-  (tabs)/contacts.tsx            # contacts list with overdue badges
-  (tabs)/search.tsx              # semantic search
+  (tabs)/contacts.tsx            # contacts list with overdue badges (contact_tier-based)
+  (tabs)/search.tsx              # semantic search (hidden from tab bar, accessible via nav)
+  (tabs)/calendar.tsx            # calendar view (hidden from tab bar, accessible via nav)
   (tabs)/modes.tsx               # location anchors + geofence activation
+  (tabs)/logs.tsx                # in-app debug log viewer (subscribes to lib/logger)
   contact/[id].tsx               # contact detail — timeline, log interaction
   contact-new.tsx                # new contact form
+  connect-widget.tsx             # widget registration screen — links widget_id to user account
 mobile/lib/
   supabase.ts                    # Supabase client with SecureStore auth persistence
-  types.ts                       # Task, Contact, ContactEvent, TaskType, TaskStatus, etc.
+  types.ts                       # Task, Contact, ContactEvent, Tag, TaskType, TaskStatus, ContactTier, etc.
   geofence.ts                    # expo-location geofencing task + startGeofencing/stopGeofencing
+  logger.ts                      # in-memory log ring buffer + subscribe() for LogsScreen
+  theme.ts                       # T color tokens, MONO font, raisedShadow helpers
+  dailyTasks.ts                  # daily task helpers
+  widgetSync.ts                  # widget registration + sync helpers
 ```
 
 ## Edge Functions
@@ -162,8 +170,12 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | `fn-embed-note` | pg_cron every 2 min | Paragraph chunks → embeddings → GPT-4o-mini category+tags |
 | `fn-search-notes` | HTTP POST from client | Embeds query → calls `search_notes()` DB function |
 | `fn-draft-catchup` | HTTP POST from client | GPT-4o-mini drafts catch-up message for a contact |
+| `fn-auto-tag` | HTTP POST from client | GPT-4o-mini picks best tag from user's tag list for a task |
+| `fn-widget-data` | HTTP GET from iOS widget | Returns today's tasks for a `widget_id` (no JWT — uses `widget_registrations` table) |
+| `fn-widget-action` | HTTP POST from iOS widget | Complete or rollover a task; auth via `widget_id` credential |
 
-`fn-search-notes` and `fn-draft-catchup` verify the user JWT from `Authorization` header before executing.
+`fn-search-notes`, `fn-draft-catchup`, and `fn-auto-tag` verify the user JWT from `Authorization` header before executing.
+`fn-widget-data` and `fn-widget-action` use `widget_registrations.widget_id` as the auth credential (no JWT — widget can't store tokens).
 
 ## Database Key Patterns
 
@@ -173,6 +185,9 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 - `tasks.contact_id`: optional FK to contacts. `trg_event_task_contact` trigger updates `contacts.last_contacted_at` when event task marked done.
 - `contact_events` with `event_type in ('photo_sent','message_sent','met')` also auto-update `contacts.last_contacted_at` via `trg_last_contacted` trigger.
 - `note_chunks.embedding` uses HNSW index (`vector_cosine_ops`, m=16, ef_construction=64). `search_notes()` DB function handles cosine similarity search.
+- `tags` + `task_tags`: user-defined tags; `fn-auto-tag` auto-assigns one tag per task via GPT-4o-mini.
+- `widget_registrations`: maps `widget_id` (UUID generated on iOS) → `user_id`. No JWT needed — widget uses `widget_id` as credential for `fn-widget-data` / `fn-widget-action`.
+- `contacts.contact_tier`: enum `daily|weekly|biweekly|monthly` — drives overdue badge logic via `CONTACT_TIER_DAYS` map (`1/7/14/30` days).
 
 ## Build Phase Status
 
@@ -186,3 +201,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | 5 — Notes + semantic search | ✅ Done |
 | 6 — Task events + calendar view | ✅ Done |
 | 7 — Mobile notes with voice | ⏳ Code ready, needs dev client build |
+| 8 — iOS widget (tasks/events) | ✅ Done — HTTP polling via Supabase, no App Group required; `connect-widget.tsx` registers widget |
+| 9 — Tags + AI auto-tag | ✅ Done — `tags`/`task_tags` tables, `fn-auto-tag` edge function |
+| 10 — Today dashboard (mobile) | ✅ Done — `today.tsx` shows tasks + overdue contacts |
+| 11 — In-app debug logs | ✅ Done — `logs.tsx` + `lib/logger.ts` ring buffer |
