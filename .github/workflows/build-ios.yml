@@ -80,21 +80,22 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Three injections into post_install:
+          # Two injections into post_install:
           # 1. ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets
-          # 2. FRAMEWORK_SEARCH_PATHS += xcframework ios-arm64 slice for ExpoModulesCore consumers
-          #    (ExpoModulesCore 56 ships prebuilt — CocoaPods skips Pods/Headers/Public/ExpoModulesCore.
-          #     Pointing FRAMEWORK_SEARCH_PATHS directly at the arm64 slice lets #import <ExpoModulesCore/X.h>
-          #     resolve via the framework bundle WITHOUT creating a duplicate copy that xcodebuild also
-          #     exposes through XCFrameworkIntermediates. One path, no ODR violations.)
-          # 3. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for EXAV ONLY
+          # 2. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for EXAV ONLY
           #    (expo-av 15 imports <ExpoModulesCore/EXEventEmitter.h> — a Legacy-API protocol header
           #     vendored in mobile/ci/expo-legacy-shim/, absent from the xcframework's public Headers.
           #     The shim dir is populated AFTER pod install with ONLY the headers missing from the
-          #     xcframework, so no header is ever reachable via both -I and -F — preserving the
-          #     no-ODR invariant. Scoped to EXAV alone: run 58 failed with ExpoTaskManager's module
-          #     build unable to find <UMAppLoader/UMAppLoaderInterface.h> after the shim was appended
-          #     to all consumers' HEADER_SEARCH_PATHS; SDK 56-matched pods don't need the shim.)
+          #     xcframework, so no header is ever reachable twice — preserving the no-ODR invariant.
+          #     Scoped to EXAV alone: run 58 failed with ExpoTaskManager's module build unable to
+          #     find <UMAppLoader/UMAppLoaderInterface.h> after the shim was appended to all
+          #     consumers' HEADER_SEARCH_PATHS; SDK 56-matched pods don't need the shim.)
+          # NO FRAMEWORK_SEARCH_PATHS patch anymore: run 60's EXAV.release.xcconfig dump proved
+          # Expo's own autolinking already puts the xcframework Headers dirs (both slices) into
+          # every consumer's HEADER_SEARCH_PATHS. Our extra -F entry pointing at the raw
+          # xcframework slice was redundant and is suspected of confusing Xcode 26's explicit
+          # module scanner (run 60: EXAV module precompile failed to find React/RCTBridgeModule.h
+          # while plain ObjC compiles of sibling pods resolved React headers fine).
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -104,35 +105,18 @@ jobs:
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
               "  end\n"
-              "  # ExpoModulesCore is a prebuilt xcframework — add its arm64 slice to FRAMEWORK_SEARCH_PATHS\n"
-              "  # so #import <ExpoModulesCore/X.h> resolves via the framework bundle (single path, no ODR).\n"
-              "  xcf_arm64 = '$(PODS_ROOT)/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64'\n"
-              "  expo_consumers = %w[EXAV ExpoLocation ExpoFileSystem ExpoTaskManager\n"
-              "                      ExpoSecureStore ExpoBattery ExpoBlur ExpoCamera\n"
-              "                      ExpoContacts ExpoDevice ExpoDocumentPicker ExpoFont\n"
-              "                      ExpoHaptics ExpoImage ExpoImageLoader ExpoKeepAwake\n"
-              "                      ExpoLinearGradient ExpoMediaLibrary ExpoNetwork\n"
-              "                      ExpoScreenOrientation ExpoSplashScreen ExpoStatusBar\n"
-              "                      ExpoVideoThumbnails ExpoWebBrowser RNVoice]\n"
               "  # Shim dir for Legacy-API headers absent from the prebuilt xcframework\n"
               "  # (populated by the 'Create ExpoModulesCore legacy header shim' CI step after pod install).\n"
-              "  # Applied to EXAV only — the sole Legacy-API pod; appending it to SDK 56 pods broke\n"
-              "  # ExpoTaskManager's module build in run 58.\n"
+              "  # EXAV only — the sole Legacy-API pod. Expo's own autolinking already exposes the\n"
+              "  # xcframework Headers dirs via HEADER_SEARCH_PATHS for every consumer, so no\n"
+              "  # FRAMEWORK_SEARCH_PATHS patching is needed.\n"
               "  shim_dir = '$(PODS_ROOT)/../ExpoModulesCoreShim'\n"
-              "  shim_consumers = %w[EXAV]\n"
               "  installer.pods_project.targets\n"
-              "    .select { |t| expo_consumers.include?(t.name) }\n"
+              "    .select { |t| t.name == 'EXAV' }\n"
               "    .each do |target|\n"
               "      target.build_configurations.each do |config|\n"
-              "        fsp = config.build_settings['FRAMEWORK_SEARCH_PATHS']\n"
               "        hsp = config.build_settings['HEADER_SEARCH_PATHS']\n"
-              "        puts \"[ci-patch] #{target.name}/#{config.name} FSP=#{fsp.inspect} HSP=#{hsp.inspect}\"\n"
-              "        case fsp\n"
-              "        when Array  then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = (fsp + [xcf_arm64]).uniq\n"
-              "        when String then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = fsp + ' ' + xcf_arm64\n"
-              "        else             config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) ' + xcf_arm64\n"
-              "        end\n"
-              "        next unless shim_consumers.include?(target.name)\n"
+              "        puts \"[ci-patch] #{target.name}/#{config.name} HSP=#{hsp.inspect}\"\n"
               "        case hsp\n"
               "        when Array  then config.build_settings['HEADER_SEARCH_PATHS'] = (hsp + [shim_dir]).uniq\n"
               "        when String then config.build_settings['HEADER_SEARCH_PATHS'] = hsp + ' ' + shim_dir\n"
