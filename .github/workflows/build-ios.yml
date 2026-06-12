@@ -87,12 +87,14 @@ jobs:
           #     Pointing FRAMEWORK_SEARCH_PATHS directly at the arm64 slice lets #import <ExpoModulesCore/X.h>
           #     resolve via the framework bundle WITHOUT creating a duplicate copy that xcodebuild also
           #     exposes through XCFrameworkIntermediates. One path, no ODR violations.)
-          # 3. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for the same consumers
-          #    (legacy pods like expo-av 15 import <ExpoModulesCore/EXEventEmitter.h> — a Legacy-API
-          #     protocol header that exists in the expo-modules-core npm source but is NOT shipped in
-          #     the xcframework's public Headers. The shim dir is populated AFTER pod install with
-          #     ONLY the headers missing from the xcframework, so no header is ever reachable via
-          #     both -I and -F — preserving the no-ODR invariant.)
+          # 3. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for EXAV ONLY
+          #    (expo-av 15 imports <ExpoModulesCore/EXEventEmitter.h> — a Legacy-API protocol header
+          #     vendored in mobile/ci/expo-legacy-shim/, absent from the xcframework's public Headers.
+          #     The shim dir is populated AFTER pod install with ONLY the headers missing from the
+          #     xcframework, so no header is ever reachable via both -I and -F — preserving the
+          #     no-ODR invariant. Scoped to EXAV alone: run 58 failed with ExpoTaskManager's module
+          #     build unable to find <UMAppLoader/UMAppLoaderInterface.h> after the shim was appended
+          #     to all consumers' HEADER_SEARCH_PATHS; SDK 56-matched pods don't need the shim.)
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -114,18 +116,23 @@ jobs:
               "                      ExpoVideoThumbnails ExpoWebBrowser RNVoice]\n"
               "  # Shim dir for Legacy-API headers absent from the prebuilt xcframework\n"
               "  # (populated by the 'Create ExpoModulesCore legacy header shim' CI step after pod install).\n"
+              "  # Applied to EXAV only — the sole Legacy-API pod; appending it to SDK 56 pods broke\n"
+              "  # ExpoTaskManager's module build in run 58.\n"
               "  shim_dir = '$(PODS_ROOT)/../ExpoModulesCoreShim'\n"
+              "  shim_consumers = %w[EXAV]\n"
               "  installer.pods_project.targets\n"
               "    .select { |t| expo_consumers.include?(t.name) }\n"
               "    .each do |target|\n"
               "      target.build_configurations.each do |config|\n"
               "        fsp = config.build_settings['FRAMEWORK_SEARCH_PATHS']\n"
+              "        hsp = config.build_settings['HEADER_SEARCH_PATHS']\n"
+              "        puts \"[ci-patch] #{target.name}/#{config.name} FSP=#{fsp.inspect} HSP=#{hsp.inspect}\"\n"
               "        case fsp\n"
               "        when Array  then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = (fsp + [xcf_arm64]).uniq\n"
               "        when String then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = fsp + ' ' + xcf_arm64\n"
               "        else             config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) ' + xcf_arm64\n"
               "        end\n"
-              "        hsp = config.build_settings['HEADER_SEARCH_PATHS']\n"
+              "        next unless shim_consumers.include?(target.name)\n"
               "        case hsp\n"
               "        when Array  then config.build_settings['HEADER_SEARCH_PATHS'] = (hsp + [shim_dir]).uniq\n"
               "        when String then config.build_settings['HEADER_SEARCH_PATHS'] = hsp + ' ' + shim_dir\n"
@@ -197,6 +204,12 @@ jobs:
           ls "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers/" 2>/dev/null | head -20 || echo "arm64 headers not found"
           echo "=== Pods/Headers/Public/ExpoModulesCore (should be EMPTY/absent) ==="
           ls Pods/Headers/Public/ExpoModulesCore/ 2>/dev/null && echo "WARNING: public header copy exists — will cause ODR" || echo "OK: no public header copy"
+          echo "=== UMAppLoader public headers (ExpoTaskManager dependency) ==="
+          ls Pods/Headers/Public/UMAppLoader/ 2>/dev/null || echo "MISSING: Pods/Headers/Public/UMAppLoader"
+          echo "=== ExpoTaskManager xcconfig search paths ==="
+          grep -E "SEARCH_PATHS" "Pods/Target Support Files/ExpoTaskManager/ExpoTaskManager.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
+          echo "=== EXAV xcconfig search paths ==="
+          grep -E "SEARCH_PATHS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
