@@ -69,50 +69,23 @@ jobs:
               raise SystemExit(f'ERROR: expected pattern not found in {path} — expo-av version changed?')
           PYEOF
 
-      - name: Patch ExpoModulesCore framework imports in expo-av and shim headers
+      - name: Remove expo-av video Swift files (audio-only app; video Swifts trigger fatal module build)
         working-directory: mobile
         run: |
-          # expo-av 15 uses <ExpoModulesCore/EXEventEmitter.h> style (framework-relative imports).
-          # These use FRAMEWORK LOOKUP (-F), not include-path lookup (-I). The xcframework copy
-          # to XCFrameworkIntermediates that Xcode creates at build time does NOT include our
-          # injected legacy headers (the copy mechanism appears to exclude them). So framework
-          # lookup fails with "did not find header in framework 'ExpoModulesCore'" (run 68/69).
-          # Fix: rewrite <ExpoModulesCore/EXX.h> → <EXX.h> (flat angle-bracket import) in both
-          # expo-av ObjC headers AND our shim headers. Flat imports use -I include paths, which
-          # DO include the xcframework ios-arm64 slice Headers/ dir (wired by 'Create ExpoModulesCore
-          # legacy header shim' xcconfig step). Our injection step already puts EXEventEmitter.h etc.
-          # into that dir, so flat imports find them reliably.
-          python3 << 'PYEOF'
-          import os, re, glob
-
-          pattern = re.compile(r'#import <ExpoModulesCore/(EX\w+\.h)>')
-          replacement = r'#import <\1>'
-
-          patched = []
-          # Patch expo-av ObjC headers
-          for root, dirs, files in os.walk('node_modules/expo-av/ios'):
-              for f in files:
-                  if f.endswith('.h'):
-                      path = os.path.join(root, f)
-                      try:
-                          content = open(path).read()
-                      except Exception:
-                          continue
-                      new_content = pattern.sub(replacement, content)
-                      if new_content != content:
-                          open(path, 'w').write(new_content)
-                          patched.append(path)
-          # Patch our shim headers (they also use <ExpoModulesCore/X.h> style)
-          for path in glob.glob('ci/expo-legacy-shim/ExpoModulesCore/*.h'):
-              content = open(path).read()
-              new_content = pattern.sub(replacement, content)
-              if new_content != content:
-                  open(path, 'w').write(new_content)
-                  patched.append(path)
-          print(f'Patched {len(patched)} files:')
-          for p in sorted(patched):
-              print(f'  {p}')
-          PYEOF
+          # ExpoVideoView.swift and VideoViewModule.swift are the sole Swift files in the EXAV pod.
+          # Their presence triggers Swift's -import-underlying-module, which forces an ObjC module
+          # build for EXAV. That build needs <ExpoModulesCore/EXEventEmitter.h> via FRAMEWORK lookup
+          # (-F XCFrameworkIntermediates). XCFrameworkIntermediates is populated by Xcode from the
+          # xcframework slice during the build, and the slice copy does NOT include our injected
+          # legacy headers — framework lookup always fails there. The -I shim works only for direct
+          # ObjC source compilation (CompileC for .m files), not for modular builds.
+          # This app uses expo-av exclusively for Audio.Recording (braindump/notes voice capture);
+          # the video components are never called. Removing these two Swift files makes EXAV
+          # ObjC-only: no SwiftCompile, no -import-underlying-module, no module build failure.
+          rm -f node_modules/expo-av/ios/EXAV/ExpoVideoView.swift \
+                node_modules/expo-av/ios/EXAV/Video/VideoViewModule.swift
+          echo "=== Remaining Swift files in expo-av (expect none) ==="
+          find node_modules/expo-av/ios/EXAV -name "*.swift" 2>/dev/null || echo "(none)"
 
       - name: Write .env file
         working-directory: mobile
