@@ -53,6 +53,50 @@ Env vars in `mobile/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANO
 - Download artifact → drag into AltStore → signs with free Apple ID → installs on iPhone
 - AltStore re-signs every 7 days automatically over WiFi
 
+**Checking CI logs automatically** (no `gh` CLI — use curl + Git Credential Manager):
+
+```bash
+# Get OAuth token git already has stored
+TOKEN=$(printf 'protocol=https\nhost=github.com\n' | git credential fill | grep password | cut -d= -f2)
+
+# 1. Find latest run ID (public — no auth needed)
+RUN=$(curl -s "https://api.github.com/repos/OhamjDung/LifeOS/actions/workflows/build-ios.yml/runs?per_page=1" \
+  | python3 -c "import sys,json; r=json.load(sys.stdin)['workflow_runs'][0]; print(r['id'], r['status'], r['conclusion'])")
+echo "Run: $RUN"
+RUN_ID=$(echo $RUN | cut -d' ' -f1)
+
+# 2. Poll run status (repeat until conclusion != null)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://api.github.com/repos/OhamjDung/LifeOS/actions/runs/$RUN_ID" \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['status'], r['conclusion'])"
+
+# 3. Get per-step results + job ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://api.github.com/repos/OhamjDung/LifeOS/actions/runs/$RUN_ID/jobs" \
+  | python3 -c "
+import sys,json
+jobs=json.load(sys.stdin)['jobs']
+for j in jobs:
+    print(f'Job {j[\"id\"]}: {j[\"conclusion\"]}')
+    for s in j['steps']: print(f'  [{s[\"conclusion\"]}] {s[\"name\"]}')
+"
+
+# 4. Download full step logs (auth required)
+JOB_ID=<job_id_from_step_3>
+curl -sL -H "Authorization: Bearer $TOKEN" \
+  "https://api.github.com/repos/OhamjDung/LifeOS/actions/jobs/$JOB_ID/logs" \
+  -o /tmp/ci_job.log
+grep -E "error:|warning:|FAILED|❌" /tmp/ci_job.log | head -40
+```
+
+**Caveat**: job logs = step stdout only. Raw `xcodebuild.log` (full compiler output) lives in `/tmp/xcodebuild.log` on the runner. The workflow uploads it as an artifact on failure — download via:
+```bash
+curl -sL -H "Authorization: Bearer $TOKEN" \
+  "https://api.github.com/repos/OhamjDung/LifeOS/actions/runs/$RUN_ID/artifacts" \
+  | python3 -c "import sys,json; [print(a['name'], a['archive_download_url']) for a in json.load(sys.stdin)['artifacts']]"
+# Then curl -sL -H "Authorization: Bearer $TOKEN" <archive_download_url> -o /tmp/artifact.zip
+```
+
 ## AI Models
 
 All AI calls use GitHub Models (free) via OpenAI SDK with a custom base URL:
