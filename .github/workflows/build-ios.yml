@@ -80,29 +80,12 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Two injections into post_install:
-          # 1. ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets
-          # 2. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for EXAV ONLY
-          #    (expo-av 15 imports <ExpoModulesCore/EXEventEmitter.h> — a Legacy-API protocol header
-          #     vendored in mobile/ci/expo-legacy-shim/, absent from the xcframework's public Headers.
-          #     The shim dir is populated AFTER pod install with ONLY the headers missing from the
-          #     xcframework, so no header is ever reachable twice — preserving the no-ODR invariant.
-          #     Scoped to EXAV alone: run 58 failed with ExpoTaskManager's module build unable to
-          #     find <UMAppLoader/UMAppLoaderInterface.h> after the shim was appended to all
-          #     consumers' HEADER_SEARCH_PATHS; SDK 56-matched pods don't need the shim.)
-          # NO FRAMEWORK_SEARCH_PATHS patch anymore: run 60's EXAV.release.xcconfig dump proved
-          # Expo's own autolinking already puts the xcframework Headers dirs (both slices) into
-          # every consumer's HEADER_SEARCH_PATHS. Our extra -F entry pointing at the raw
-          # xcframework slice was redundant and is suspected of confusing Xcode 26's explicit
-          # module scanner (run 60: EXAV module precompile failed to find React/RCTBridgeModule.h
-          # while plain ObjC compiles of sibling pods resolved React headers fine).
-          # 3. React-VFS overlay flags for EXAV (run 61 root cause):
-          #    RN 0.85 ships React-Core prebuilt; <React/X.h> imports resolve through a clang VFS
-          #    overlay (Pods/React-Core-prebuilt/React-VFS.yaml) that maps the flat React/ header
-          #    namespace onto the framework's nested layout. RN's post-install hook adds
-          #    -ivfsoverlay only to pods depending on React-Core — expo-av 15 depends on
-          #    ReactCommon/turbomodule/core instead, so EXAV never gets the flag and its Swift
-          #    underlying-module build dies with "'React/RCTBridgeModule.h' file not found".
+          # Single injection into post_install: ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets.
+          # EXAV-specific fixes (legacy shim path, React-VFS overlay flags) are applied by editing
+          # EXAV's xcconfig files in the 'Create ExpoModulesCore legacy header shim' step AFTER pod
+          # install — NOT via target build_settings here. Run 64 proved Expo/RN's own post_install
+          # hooks merge target-level values into a Ruby array that ends up stringified
+          # ('["...", "..."]') in the build command, mangling every path in it.
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -112,46 +95,6 @@ jobs:
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
               "  end\n"
-              "  # Shim dir for Legacy-API headers absent from the prebuilt xcframework\n"
-              "  # (populated by the 'Create ExpoModulesCore legacy header shim' CI step after pod install).\n"
-              "  # EXAV only — the sole Legacy-API pod. Expo's own autolinking already exposes the\n"
-              "  # xcframework Headers dirs via HEADER_SEARCH_PATHS for every consumer, so no\n"
-              "  # FRAMEWORK_SEARCH_PATHS patching is needed.\n"
-              "  shim_dir = '$(PODS_ROOT)/../ExpoModulesCoreShim'\n"
-              "  vfs_yaml = '\"$(PODS_ROOT)/React-Core-prebuilt/React-VFS.yaml\"'\n"
-              "  # The React-VFS overlay's virtual root: contains virtual React/, CoreModules/, ...\n"
-              "  # dirs that map flat <React/X.h> names onto the xcframework's nested Headers layout.\n"
-              "  # An -I to this root is what actually makes <React/RCTBridgeModule.h> resolve.\n"
-              "  vfs_root = '\"$(PODS_ROOT)/React-Core-prebuilt/React.xcframework/Headers\"'\n"
-              "  installer.pods_project.targets\n"
-              "    .select { |t| t.name == 'EXAV' }\n"
-              "    .each do |target|\n"
-              "      target.build_configurations.each do |config|\n"
-              "        hsp = config.build_settings['HEADER_SEARCH_PATHS']\n"
-              "        puts \"[ci-patch] #{target.name}/#{config.name} HSP=#{hsp.inspect}\"\n"
-              "        hsp_add = shim_dir + ' ' + vfs_root\n"
-              "        case hsp\n"
-              "        when Array  then config.build_settings['HEADER_SEARCH_PATHS'] = (hsp + [shim_dir, vfs_root]).uniq\n"
-              "        when String then config.build_settings['HEADER_SEARCH_PATHS'] = hsp + ' ' + hsp_add\n"
-              "        else             config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) ' + hsp_add\n"
-              "        end\n"
-              "        # React-VFS overlay so <React/X.h> resolves against the prebuilt React framework.\n"
-              "        cflags = config.build_settings['OTHER_CFLAGS']\n"
-              "        vfs_c = ' -ivfsoverlay ' + vfs_yaml\n"
-              "        case cflags\n"
-              "        when Array  then config.build_settings['OTHER_CFLAGS'] = cflags + ['-ivfsoverlay', vfs_yaml]\n"
-              "        when String then config.build_settings['OTHER_CFLAGS'] = cflags + vfs_c\n"
-              "        else             config.build_settings['OTHER_CFLAGS'] = '$(inherited)' + vfs_c\n"
-              "        end\n"
-              "        sflags = config.build_settings['OTHER_SWIFT_FLAGS']\n"
-              "        vfs_s = ' -Xcc -ivfsoverlay -Xcc ' + vfs_yaml\n"
-              "        case sflags\n"
-              "        when Array  then config.build_settings['OTHER_SWIFT_FLAGS'] = sflags + ['-Xcc', '-ivfsoverlay', '-Xcc', vfs_yaml]\n"
-              "        when String then config.build_settings['OTHER_SWIFT_FLAGS'] = sflags + vfs_s\n"
-              "        else             config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited)' + vfs_s\n"
-              "        end\n"
-              "      end\n"
-              "    end\n"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
           with open('Podfile', 'w') as f:
@@ -198,6 +141,51 @@ jobs:
           ls "$SHIM"
           echo "=== Sanity: EXEventEmitter.h must be in shim ==="
           test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING — header present in xcframework now? Check skip list above"; exit 1; }
+
+      - name: Wire EXAV xcconfig (shim + React-VFS overlay)
+        working-directory: mobile/ios
+        run: |
+          # Edit EXAV's xcconfig files directly — the same layer Expo/RN use. Patching target
+          # build_settings in post_install gets mangled by Expo/RN's later hooks (run 64: values
+          # merged into a Ruby array and stringified into the build command).
+          # - shim dir: Legacy-API headers absent from the ExpoModulesCore xcframework
+          # - VFS virtual root (-I) + -ivfsoverlay: RN 0.85 prebuilt React resolves <React/X.h>
+          #   through the React-VFS.yaml overlay; expo-av 15 depends on ReactCommon (not
+          #   React-Core) so RN's hook never wires it up (runs 60-64).
+          python3 << 'PYEOF'
+          import os
+          pods_root = os.path.abspath('Pods')
+          vfs_yaml = f'"{pods_root}/React-Core-prebuilt/React-VFS.yaml"'
+          hsp_add = ' "${PODS_ROOT}/../ExpoModulesCoreShim" "${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers"'
+          cflags_add = f' -ivfsoverlay {vfs_yaml}'
+          sflags_add = f' -Xcc -ivfsoverlay -Xcc {vfs_yaml}'
+          for cfg in ('release', 'debug'):
+              path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
+              if not os.path.exists(path):
+                  raise SystemExit(f'ERROR: {path} not found')
+              lines = open(path).read().splitlines()
+              keys_seen = set()
+              for i, line in enumerate(lines):
+                  key = line.split('=')[0].strip() if '=' in line else ''
+                  if key == 'HEADER_SEARCH_PATHS':
+                      lines[i] = line + hsp_add
+                  elif key == 'OTHER_CFLAGS':
+                      lines[i] = line + cflags_add
+                  elif key == 'OTHER_SWIFT_FLAGS':
+                      lines[i] = line + sflags_add
+                  keys_seen.add(key)
+              if 'OTHER_CFLAGS' not in keys_seen:
+                  lines.append('OTHER_CFLAGS = $(inherited)' + cflags_add)
+              if 'OTHER_SWIFT_FLAGS' not in keys_seen:
+                  lines.append('OTHER_SWIFT_FLAGS = $(inherited)' + sflags_add)
+              if 'HEADER_SEARCH_PATHS' not in keys_seen:
+                  lines.append('HEADER_SEARCH_PATHS = $(inherited)' + hsp_add)
+              open(path, 'w').write('\n'.join(lines) + '\n')
+              print(f'patched {path}')
+          PYEOF
+          echo "=== EXAV.release.xcconfig after patch (relevant lines) ==="
+          grep -E "OTHER_CFLAGS|OTHER_SWIFT_FLAGS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"
+          grep -oE 'HEADER_SEARCH_PATHS.{0,80}' "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" | head -1
 
       - name: Diagnose ExpoModulesCore xcframework headers
         working-directory: mobile/ios
