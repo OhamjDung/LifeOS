@@ -217,6 +217,17 @@ jobs:
           grep -E "SEARCH_PATHS" "Pods/Target Support Files/ExpoTaskManager/ExpoTaskManager.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
           echo "=== EXAV xcconfig search paths ==="
           grep -E "SEARCH_PATHS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
+          echo "=== React-VFS.yaml (resolved overlay — what maps where) ==="
+          head -60 Pods/React-Core-prebuilt/React-VFS.yaml 2>/dev/null || echo "React-VFS.yaml not found"
+          echo "=== React-Core-prebuilt layout ==="
+          ls Pods/React-Core-prebuilt/ 2>/dev/null
+          ls Pods/React-Core-prebuilt/React.xcframework/ 2>/dev/null
+          echo "=== React.xcframework top-level Headers (first 10) ==="
+          ls Pods/React-Core-prebuilt/React.xcframework/Headers/ 2>/dev/null | head -10 || echo "no top-level Headers"
+          echo "=== react-native-voice xcconfig (working <React/...> consumer) ==="
+          grep -E "OTHER_CFLAGS|SEARCH_PATHS|SWIFT_FLAGS" "Pods/Target Support Files/react-native-voice/react-native-voice.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
+          echo "=== EXAV xcconfig flags ==="
+          grep -E "OTHER_CFLAGS|SWIFT_FLAGS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
