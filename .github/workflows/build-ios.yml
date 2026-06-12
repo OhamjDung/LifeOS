@@ -177,9 +177,18 @@ jobs:
           import os
           pods_root = os.path.abspath('Pods')
           vfs_yaml = f'"{pods_root}/React-Core-prebuilt/React-VFS.yaml"'
+          # EXLegacyCompat.h: static-inline EXFatal/EXErrorWithMessage — deleted from
+          # expo-modules-core 56 (declaration AND symbol), still used across expo-av's ObjC.
+          compat_h = '"${PODS_ROOT}/../../ci/expo-legacy-shim/EXLegacyCompat.h"'
           hsp_add = ' "${PODS_ROOT}/../ExpoModulesCoreShim" "${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers"'
-          cflags_add = f' -ivfsoverlay {vfs_yaml}'
+          cflags_add = f' -ivfsoverlay {vfs_yaml} -include {compat_h}'
           sflags_add = f' -Xcc -ivfsoverlay -Xcc {vfs_yaml}'
+          adds = {
+              'HEADER_SEARCH_PATHS': hsp_add,
+              'OTHER_CFLAGS': cflags_add,
+              'OTHER_CPLUSPLUSFLAGS': cflags_add,
+              'OTHER_SWIFT_FLAGS': sflags_add,
+          }
           for cfg in ('release', 'debug'):
               path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
               if not os.path.exists(path):
@@ -188,19 +197,12 @@ jobs:
               keys_seen = set()
               for i, line in enumerate(lines):
                   key = line.split('=')[0].strip() if '=' in line else ''
-                  if key == 'HEADER_SEARCH_PATHS':
-                      lines[i] = line + hsp_add
-                  elif key == 'OTHER_CFLAGS':
-                      lines[i] = line + cflags_add
-                  elif key == 'OTHER_SWIFT_FLAGS':
-                      lines[i] = line + sflags_add
+                  if key in adds:
+                      lines[i] = line + adds[key]
                   keys_seen.add(key)
-              if 'OTHER_CFLAGS' not in keys_seen:
-                  lines.append('OTHER_CFLAGS = $(inherited)' + cflags_add)
-              if 'OTHER_SWIFT_FLAGS' not in keys_seen:
-                  lines.append('OTHER_SWIFT_FLAGS = $(inherited)' + sflags_add)
-              if 'HEADER_SEARCH_PATHS' not in keys_seen:
-                  lines.append('HEADER_SEARCH_PATHS = $(inherited)' + hsp_add)
+              for key, suffix in adds.items():
+                  if key not in keys_seen:
+                      lines.append(f'{key} = $(inherited)' + suffix)
               open(path, 'w').write('\n'.join(lines) + '\n')
               print(f'patched {path}')
           PYEOF

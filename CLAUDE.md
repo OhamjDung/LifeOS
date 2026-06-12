@@ -53,6 +53,55 @@ Env vars in `mobile/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANO
 - Download artifact → drag into AltStore → signs with free Apple ID → installs on iPhone
 - AltStore re-signs every 7 days automatically over WiFi
 
+## CI Build Breakage: expo-av vs SDK 56 (runs 39–66, June 2026)
+
+**Root cause — why build 38 worked and 39+ didn't**: run 38 (commit `e9b28b0`) was the
+last build WITHOUT expo-av. Run 39's commit `1df9bc5` added `expo-av ~15.0.0` to fix the
+voice "Session activation failed" bug. expo-av 15 is an SDK 52-era, deprecated pod (last
+supported SDK ~54, uses the removed Legacy module API) inside an SDK 56 app — every CI
+failure since run 39 is that one dependency. Nothing else regressed.
+
+**Terminal fix (recommended)**: migrate `braindump.tsx`/`notes.tsx` from expo-av
+`Audio.Recording` to `expo-audio` (SDK 56-native), drop `expo-av` from package.json, and
+delete `mobile/ci/expo-legacy-shim/` + the two EXAV CI steps. The shims below only make
+expo-av COMPILE; runtime behavior on device is unverified.
+
+**Shim inventory (what's working)** — each fixed a confirmed failure:
+
+| Piece | Fixes | Run that proved it |
+|---|---|---|
+| `mobile/ci/expo-legacy-shim/ExpoModulesCore/*.h` (31 vendored Legacy headers from expo-modules-core 3.0.30) + "Create ExpoModulesCore legacy header shim" step (copy-if-absent vs xcframework Headers) | `'ExpoModulesCore/EXEventEmitter.h' file not found` — expo-modules-core 56.x deleted `ios/Legacy/` from npm AND omits those headers from the prebuilt xcframework | 58 |
+| "Wire EXAV xcconfig" step → `HEADER_SEARCH_PATHS += shim dir + Pods/React-Core-prebuilt/React.xcframework/Headers`, `OTHER_CFLAGS/OTHER_CPLUSPLUSFLAGS/OTHER_SWIFT_FLAGS += -ivfsoverlay React-VFS.yaml` | `'React/RCTBridgeModule.h' file not found` — RN 0.85 ships React-Core prebuilt; flat `<React/X.h>` names exist ONLY through the clang VFS overlay, and RN wires it only into pods depending on `React-Core` (expo-av depends on `ReactCommon/turbomodule/core`) | 65 |
+| "Patch expo-av Swift" step (rewrites `VideoViewModule.swift` resolver closure) | `Promise.ResolveClosure` retyped to `(JavaScriptValue) -> Void` in ExpoModulesCore 56 | 66 |
+| `EXLegacyCompat.h` force-included via `-include` in EXAV OTHER_CFLAGS | `EXFatal`/`EXErrorWithMessage` undeclared — deleted from expo-modules-core 56 (symbol gone too, so static-inline reimplementation, not a declaration) | pending |
+
+**Hard-won rules (violating these re-breaks the build)**:
+- NEVER copy xcframework headers into `Pods/Headers/Public/ExpoModulesCore/` — same header
+  reachable via both `-I` and `-F` → ODR redefinition errors (run 3-of-saga / `a1d422c`).
+- NEVER set EXAV search paths/flags via `target.build_settings` in Podfile `post_install` —
+  Expo/RN hooks that run later merge the value into a Ruby array that gets STRINGIFIED into
+  the build command as one giant `-I["…", "…"]` arg (run 64). Edit
+  `Pods/Target Support Files/EXAV/EXAV.{release,debug}.xcconfig` after `pod install` instead.
+- Don't add the shim `-I` to other Expo pods — broke ExpoTaskManager's module build (run 58).
+- Local `mobile/node_modules` is STALE (npm install on CI resolves fresh; expo-modules-core
+  is SDK-versioned now: CI gets 56.x, local had 3.0.30). Verify versions against the npm
+  registry, never against local files.
+
+**Debugging method that works** (each failed run = ~10 min, so maximize data per run):
+1. Workflow uploads raw `/tmp/xcodebuild.log` as artifact `xcodebuild-log` on failure —
+   step logs alone are useless (xcpretty swallows errors; run 59 failed with zero visible
+   error lines). The build step must use `if ! pipeline` — under `bash -e` + `pipefail`, a
+   plain pipeline aborts the step before any error extraction runs.
+2. In the raw log, find the failing task (`SwiftDriver EXAV`, `CompileC …`), read clang's
+   `note:` lines (run 61's "did not find header … in framework 'React' (loaded from …)"
+   identified the VFS problem), and diff the full command's `-I`/`-F`/`-Xcc` args against a
+   pod that compiles the same import successfully.
+3. Dump ground truth in the diagnose step when theory runs out: resolved `React-VFS.yaml`,
+   pod xcconfigs, `Pods/Headers/Public/` contents (runs 60/63 each turned a guess into a fact).
+4. Known future fork: ExpoModulesCore 56.0.16 xcframework swiftinterface = Swift 6.3.1;
+   Xcode 26.2 on `macos-15` = Swift 6.2.3. If "module compiled with newer Swift" appears,
+   select a newer Xcode on the runner — do NOT retry `$ExpoUseSources` (failed, `4e00d63`).
+
 **Checking CI logs automatically** (no `gh` CLI — use curl + Git Credential Manager):
 
 ```bash
