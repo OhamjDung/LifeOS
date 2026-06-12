@@ -238,8 +238,11 @@ jobs:
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_BUILD_ID: ci-${{ github.run_number }}
         run: |
+          # NOTE: the shell runs with -e. A plain `pipeline; STATUS=$?` dies at the failing
+          # pipeline before any error extraction runs (this silently skipped error reporting
+          # in runs 1-59). `if ! pipeline` suspends -e for the pipeline itself.
           set -o pipefail
-          xcodebuild archive \
+          if ! xcodebuild archive \
             -workspace ios/LifeOS.xcworkspace \
             -scheme LifeOS \
             -configuration Release \
@@ -251,13 +254,21 @@ jobs:
             SKIP_INSTALL=NO \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             -destination "generic/platform=iOS" \
-            2>&1 | tee /tmp/xcodebuild.log | xcpretty; \
-          STATUS=${PIPESTATUS[0]}; \
-          if [ $STATUS -ne 0 ]; then \
-            echo "=== XCODEBUILD ERRORS ===" && \
-            grep -E "(error:|PhaseScript|FAILED|Script-)" /tmp/xcodebuild.log | head -80; \
-            exit $STATUS; \
+            2>&1 | tee /tmp/xcodebuild.log | xcpretty; then
+            echo "=== XCODEBUILD ERRORS ==="
+            grep -E "(error:|ARCHIVE FAILED|nonzero exit code|PhaseScriptExecution|The following build commands failed)" /tmp/xcodebuild.log | head -80
+            echo "=== LAST 150 RAW LOG LINES ==="
+            tail -150 /tmp/xcodebuild.log
+            exit 65
           fi
+
+      - name: Upload xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          retention-days: 3
 
       - name: Package IPA
         run: |
