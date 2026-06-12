@@ -69,6 +69,51 @@ jobs:
               raise SystemExit(f'ERROR: expected pattern not found in {path} — expo-av version changed?')
           PYEOF
 
+      - name: Patch ExpoModulesCore framework imports in expo-av and shim headers
+        working-directory: mobile
+        run: |
+          # expo-av 15 uses <ExpoModulesCore/EXEventEmitter.h> style (framework-relative imports).
+          # These use FRAMEWORK LOOKUP (-F), not include-path lookup (-I). The xcframework copy
+          # to XCFrameworkIntermediates that Xcode creates at build time does NOT include our
+          # injected legacy headers (the copy mechanism appears to exclude them). So framework
+          # lookup fails with "did not find header in framework 'ExpoModulesCore'" (run 68/69).
+          # Fix: rewrite <ExpoModulesCore/EXX.h> → <EXX.h> (flat angle-bracket import) in both
+          # expo-av ObjC headers AND our shim headers. Flat imports use -I include paths, which
+          # DO include the xcframework ios-arm64 slice Headers/ dir (wired by 'Create ExpoModulesCore
+          # legacy header shim' xcconfig step). Our injection step already puts EXEventEmitter.h etc.
+          # into that dir, so flat imports find them reliably.
+          python3 << 'PYEOF'
+          import os, re, glob
+
+          pattern = re.compile(r'#import <ExpoModulesCore/(EX\w+\.h)>')
+          replacement = r'#import <\1>'
+
+          patched = []
+          # Patch expo-av ObjC headers
+          for root, dirs, files in os.walk('node_modules/expo-av/ios'):
+              for f in files:
+                  if f.endswith('.h'):
+                      path = os.path.join(root, f)
+                      try:
+                          content = open(path).read()
+                      except Exception:
+                          continue
+                      new_content = pattern.sub(replacement, content)
+                      if new_content != content:
+                          open(path, 'w').write(new_content)
+                          patched.append(path)
+          # Patch our shim headers (they also use <ExpoModulesCore/X.h> style)
+          for path in glob.glob('ci/expo-legacy-shim/ExpoModulesCore/*.h'):
+              content = open(path).read()
+              new_content = pattern.sub(replacement, content)
+              if new_content != content:
+                  open(path, 'w').write(new_content)
+                  patched.append(path)
+          print(f'Patched {len(patched)} files:')
+          for p in sorted(patched):
+              print(f'  {p}')
+          PYEOF
+
       - name: Write .env file
         working-directory: mobile
         env:
@@ -103,10 +148,9 @@ jobs:
         run: |
           # Single injection into post_install: ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets.
           # EXAV-specific fixes (legacy shim path, React-VFS overlay flags) are applied by editing
-          # EXAV's xcconfig files in the 'Create ExpoModulesCore legacy header shim' step AFTER pod
-          # install — NOT via target build_settings here. Run 64 proved Expo/RN's own post_install
-          # hooks merge target-level values into a Ruby array that ends up stringified
-          # ('["...", "..."]') in the build command, mangling every path in it.
+          # EXAV's xcconfig files in the 'Wire EXAV xcconfig' step AFTER pod install — NOT via
+          # target build_settings here. Run 64 proved Expo/RN's own post_install hooks merge
+          # target-level values into a Ruby array that ends up stringified into the build command.
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
