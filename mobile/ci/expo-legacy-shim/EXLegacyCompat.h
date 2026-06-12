@@ -26,5 +26,16 @@ static inline void EXFatal(NSError *error)
   NSLog(@"[expo-av EXLegacyCompat] Fatal error: %@", error);
 }
 
+// Unimodules-era promise block types (UMCore prefix) used in expo-av 15 .m files.
+// EXPromiseResolveBlock/EXPromiseRejectBlock from EXDefines.h are available but
+// EXAV.m uses the UM* names without importing EXUnimodulesCompat.h.
+typedef void (^UMPromiseResolveBlock)(id result);
+typedef void (^UMPromiseRejectBlock)(NSString *code, NSString *message, NSError *error);
+
+// Logging macros deleted from expo-modules-core 56.
+#define EXLogInfo(format, ...)  NSLog((@"[EXAV INFO] "  format), ##__VA_ARGS__)
+#define EXLogWarn(format, ...)  NSLog((@"[EXAV WARN] "  format), ##__VA_ARGS__)
+#define EXLogError(format, ...) NSLog((@"[EXAV ERROR] " format), ##__VA_ARGS__)
+
 #endif // __OBJC__
 #endif // EX_LEGACY_COMPAT_H
