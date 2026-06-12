@@ -149,35 +149,36 @@ jobs:
       - name: Create ExpoModulesCore legacy header shim
         working-directory: mobile/ios
         run: |
-          # expo-av 15 (and other Legacy-API pods) import <ExpoModulesCore/EXEventEmitter.h> etc.
-          # These Legacy protocol headers exist in the expo-modules-core npm SOURCE
-          # (node_modules/expo-modules-core/ios/Legacy/...) but are NOT shipped in the prebuilt
-          # xcframework's public Headers. Copy into a shim dir ONLY the headers that are absent
-          # from the xcframework — so every header stays reachable through exactly ONE search
-          # mechanism (shim via -I, framework headers via -F). Never copy a header that exists
-          # in the framework: that recreates the dual-path ODR failure from run 3.
-          # Swift.h is excluded: it does `#import "ExpoModulesCore-Swift.h"` (a generated header
-          # that only exists inside the built framework), so a shim copy can never compile.
+          # expo-av 15 imports <ExpoModulesCore/EXEventEmitter.h> etc. — Legacy module-API
+          # headers. expo-modules-core 56.x deleted ios/Legacy/ from its npm source, and the
+          # prebuilt xcframework omits these headers from its public Headers/ (while keeping
+          # most legacy class headers and their symbols). Vendored copies live in
+          # mobile/ci/expo-legacy-shim/ (from expo-modules-core 3.0.30 — see README there).
+          # Copy into the shim dir ONLY headers the xcframework does NOT ship — every header
+          # stays reachable through exactly ONE search mechanism (shim via -I, framework via
+          # -F). Copying a header that exists in the framework recreates the dual-path ODR
+          # failure from run 3.
           XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
+          VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
           SHIM="ExpoModulesCoreShim/ExpoModulesCore"
           test -d "$XCF_HDR" || { echo "ERROR: xcframework Headers not found at $XCF_HDR"; exit 1; }
+          test -d "$VENDORED" || { echo "ERROR: vendored shim headers not found at $VENDORED"; exit 1; }
           mkdir -p "$SHIM"
           copied=0; skipped=0
-          while IFS= read -r -d '' h; do
+          for h in "$VENDORED"/*.h; do
             name=$(basename "$h")
-            [ "$name" = "Swift.h" ] && continue
             if [ -f "$XCF_HDR/$name" ]; then
               skipped=$((skipped+1))
-            elif [ ! -f "$SHIM/$name" ]; then
+            else
               cp "$h" "$SHIM/$name"
               copied=$((copied+1))
             fi
-          done < <(find ../node_modules/expo-modules-core/ios -name '*.h' -print0)
+          done
           echo "Copied $copied headers absent from xcframework; skipped $skipped present in framework"
           echo "=== Shim contents ==="
           ls "$SHIM"
           echo "=== Sanity: EXEventEmitter.h must be in shim ==="
-          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING — expo-modules-core source layout changed"; exit 1; }
+          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING — header present in xcframework now? Check skip list above"; exit 1; }
 
       - name: Diagnose ExpoModulesCore xcframework headers
         working-directory: mobile/ios
