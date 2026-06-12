@@ -48,6 +48,27 @@ jobs:
           find node_modules/expo-modules-core -name "ExpoModulesCore.xcframework" -maxdepth 5 2>/dev/null || echo "xcframework NOT in node_modules"
           find node_modules/expo-modules-core/ios -maxdepth 2 2>/dev/null | head -20
 
+      - name: Patch expo-av Swift for ExpoModulesCore 56
+        working-directory: mobile
+        run: |
+          # expo-av 15 predates ExpoModulesCore 56's Promise API change:
+          # Promise.ResolveClosure is now @Sendable (JavaScriptValue) -> Void, but the legacy
+          # ObjC setFullscreen expects EXPromiseResolveBlock (@Sendable (Any?) -> Void).
+          # Promise.resolve(Any?) still exists — wrap it in a matching closure.
+          python3 << 'PYEOF'
+          path = 'node_modules/expo-av/ios/EXAV/Video/VideoViewModule.swift'
+          old = 'resolver: promise.resolver'
+          new = 'resolver: { (value: Any?) in promise.resolve(value) }'
+          src = open(path).read()
+          if new in src:
+              print('already patched')
+          elif old in src:
+              open(path, 'w').write(src.replace(old, new, 1))
+              print('patched', path)
+          else:
+              raise SystemExit(f'ERROR: expected pattern not found in {path} — expo-av version changed?')
+          PYEOF
+
       - name: Write .env file
         working-directory: mobile
         env:
