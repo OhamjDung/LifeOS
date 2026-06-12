@@ -96,6 +96,13 @@ jobs:
           # xcframework slice was redundant and is suspected of confusing Xcode 26's explicit
           # module scanner (run 60: EXAV module precompile failed to find React/RCTBridgeModule.h
           # while plain ObjC compiles of sibling pods resolved React headers fine).
+          # 3. React-VFS overlay flags for EXAV (run 61 root cause):
+          #    RN 0.85 ships React-Core prebuilt; <React/X.h> imports resolve through a clang VFS
+          #    overlay (Pods/React-Core-prebuilt/React-VFS.yaml) that maps the flat React/ header
+          #    namespace onto the framework's nested layout. RN's post-install hook adds
+          #    -ivfsoverlay only to pods depending on React-Core — expo-av 15 depends on
+          #    ReactCommon/turbomodule/core instead, so EXAV never gets the flag and its Swift
+          #    underlying-module build dies with "'React/RCTBridgeModule.h' file not found".
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -111,6 +118,7 @@ jobs:
               "  # xcframework Headers dirs via HEADER_SEARCH_PATHS for every consumer, so no\n"
               "  # FRAMEWORK_SEARCH_PATHS patching is needed.\n"
               "  shim_dir = '$(PODS_ROOT)/../ExpoModulesCoreShim'\n"
+              "  vfs_yaml = '\"$(PODS_ROOT)/React-Core-prebuilt/React-VFS.yaml\"'\n"
               "  installer.pods_project.targets\n"
               "    .select { |t| t.name == 'EXAV' }\n"
               "    .each do |target|\n"
@@ -121,6 +129,21 @@ jobs:
               "        when Array  then config.build_settings['HEADER_SEARCH_PATHS'] = (hsp + [shim_dir]).uniq\n"
               "        when String then config.build_settings['HEADER_SEARCH_PATHS'] = hsp + ' ' + shim_dir\n"
               "        else             config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) ' + shim_dir\n"
+              "        end\n"
+              "        # React-VFS overlay so <React/X.h> resolves against the prebuilt React framework.\n"
+              "        cflags = config.build_settings['OTHER_CFLAGS']\n"
+              "        vfs_c = ' -ivfsoverlay ' + vfs_yaml\n"
+              "        case cflags\n"
+              "        when Array  then config.build_settings['OTHER_CFLAGS'] = cflags + ['-ivfsoverlay', vfs_yaml]\n"
+              "        when String then config.build_settings['OTHER_CFLAGS'] = cflags + vfs_c\n"
+              "        else             config.build_settings['OTHER_CFLAGS'] = '$(inherited)' + vfs_c\n"
+              "        end\n"
+              "        sflags = config.build_settings['OTHER_SWIFT_FLAGS']\n"
+              "        vfs_s = ' -Xcc -ivfsoverlay -Xcc ' + vfs_yaml\n"
+              "        case sflags\n"
+              "        when Array  then config.build_settings['OTHER_SWIFT_FLAGS'] = sflags + ['-Xcc', '-ivfsoverlay', '-Xcc', vfs_yaml]\n"
+              "        when String then config.build_settings['OTHER_SWIFT_FLAGS'] = sflags + vfs_s\n"
+              "        else             config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited)' + vfs_s\n"
               "        end\n"
               "      end\n"
               "    end\n"
