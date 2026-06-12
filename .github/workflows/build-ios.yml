@@ -80,7 +80,13 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Inject ENABLE_USER_SCRIPT_SANDBOXING=NO into existing post_install block
+          # Two injections into post_install:
+          # 1. ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets
+          # 2. FRAMEWORK_SEARCH_PATHS += xcframework ios-arm64 slice for ExpoModulesCore consumers
+          #    (ExpoModulesCore 56 ships prebuilt — CocoaPods skips Pods/Headers/Public/ExpoModulesCore.
+          #     Pointing FRAMEWORK_SEARCH_PATHS directly at the arm64 slice lets #import <ExpoModulesCore/X.h>
+          #     resolve via the framework bundle WITHOUT creating a duplicate copy that xcodebuild also
+          #     exposes through XCFrameworkIntermediates. One path, no ODR violations.)
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -90,6 +96,28 @@ jobs:
               "      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'\n"
               "    end\n"
               "  end\n"
+              "  # ExpoModulesCore is a prebuilt xcframework — add its arm64 slice to FRAMEWORK_SEARCH_PATHS\n"
+              "  # so #import <ExpoModulesCore/X.h> resolves via the framework bundle (single path, no ODR).\n"
+              "  xcf_arm64 = '$(PODS_ROOT)/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64'\n"
+              "  expo_consumers = %w[EXAV ExpoLocation ExpoFileSystem ExpoTaskManager\n"
+              "                      ExpoSecureStore ExpoBattery ExpoBlur ExpoCamera\n"
+              "                      ExpoContacts ExpoDevice ExpoDocumentPicker ExpoFont\n"
+              "                      ExpoHaptics ExpoImage ExpoImageLoader ExpoKeepAwake\n"
+              "                      ExpoLinearGradient ExpoMediaLibrary ExpoNetwork\n"
+              "                      ExpoScreenOrientation ExpoSplashScreen ExpoStatusBar\n"
+              "                      ExpoVideoThumbnails ExpoWebBrowser RNVoice]\n"
+              "  installer.pods_project.targets\n"
+              "    .select { |t| expo_consumers.include?(t.name) }\n"
+              "    .each do |target|\n"
+              "      target.build_configurations.each do |config|\n"
+              "        fsp = config.build_settings['FRAMEWORK_SEARCH_PATHS']\n"
+              "        case fsp\n"
+              "        when Array  then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = (fsp + [xcf_arm64]).uniq\n"
+              "        when String then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = fsp + ' ' + xcf_arm64\n"
+              "        else             config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) ' + xcf_arm64\n"
+              "        end\n"
+              "      end\n"
+              "    end\n"
           )
           content = content.replace('post_install do |installer|', 'post_install do |installer|' + inject, 1)
           with open('Podfile', 'w') as f:
@@ -97,37 +125,29 @@ jobs:
           print('Podfile patched successfully')
           PYEOF
           echo "=== Podfile after patch (post_install section) ==="
-          awk '/post_install/,/^end/' Podfile | head -30
+          awk '/post_install/,/^end/' Podfile | head -60
 
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
 
-      - name: Fix ExpoModulesCore headers for prebuilt xcframework
+      - name: Diagnose ExpoModulesCore xcframework headers
         working-directory: mobile/ios
         run: |
-          # ExpoModulesCore 56.x ships as prebuilt xcframework — CocoaPods skips the
-          # normal Pods/Headers/Public/ExpoModulesCore/ tree. Copy xcframework device-slice
-          # headers there so pods that use angle-bracket imports can find them.
-          # Note: EXEventEmitter.h was removed in ExpoModulesCore v49+ (Swift-native now).
-          echo "=== Locating ExpoModulesCore xcframework device headers ==="
-          XCF_HDR=$(find Pods/ExpoModulesCore -type d -name "Headers" \
-            -path "*/ios-arm64/ExpoModulesCore.framework/Headers" 2>/dev/null | head -1)
-          echo "Primary (ios-arm64): ${XCF_HDR:-NOT FOUND}"
-          if [ -z "$XCF_HDR" ]; then
-            XCF_HDR=$(find Pods/ExpoModulesCore -type d -name "Headers" \
-              ! -path "*simulator*" 2>/dev/null | head -1)
-            echo "Fallback (non-simulator): ${XCF_HDR:-NOT FOUND}"
-          fi
-          mkdir -p Pods/Headers/Public/ExpoModulesCore
-          if [ -n "$XCF_HDR" ]; then
-            find "$XCF_HDR" -name "*.h" -exec cp {} Pods/Headers/Public/ExpoModulesCore/ \;
-            echo "Copied $(ls Pods/Headers/Public/ExpoModulesCore/ | wc -l) headers from xcframework"
-            echo "=== All copied headers ==="
-            ls Pods/Headers/Public/ExpoModulesCore/
-          else
-            echo "WARNING: no xcframework headers dir found — build may fail"
-          fi
+          # Diagnostic only — DO NOT copy headers.
+          # Copying creates Pods/Headers/Public/ExpoModulesCore/ (HEADER_SEARCH_PATHS) while
+          # xcodebuild also exposes the same headers via XCFrameworkIntermediates (FRAMEWORK_SEARCH_PATHS).
+          # Two paths → same header compiled twice → ODR redefinition errors at link.
+          # The Podfile post_install patch above adds the xcframework arm64 slice to
+          # FRAMEWORK_SEARCH_PATHS for all Expo consumer pods instead.
+          echo "=== ExpoModulesCore xcframework structure ==="
+          find Pods/ExpoModulesCore -maxdepth 5 -name "*.h" | head -10 || echo "no .h found"
+          echo "=== xcframework slices ==="
+          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ 2>/dev/null || echo "xcframework not found"
+          echo "=== ios-arm64 headers (first 20) ==="
+          ls "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers/" 2>/dev/null | head -20 || echo "arm64 headers not found"
+          echo "=== Pods/Headers/Public/ExpoModulesCore (should be EMPTY/absent) ==="
+          ls Pods/Headers/Public/ExpoModulesCore/ 2>/dev/null && echo "WARNING: public header copy exists — will cause ODR" || echo "OK: no public header copy"
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
