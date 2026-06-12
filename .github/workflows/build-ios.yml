@@ -80,13 +80,19 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Two injections into post_install:
+          # Three injections into post_install:
           # 1. ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets
           # 2. FRAMEWORK_SEARCH_PATHS += xcframework ios-arm64 slice for ExpoModulesCore consumers
           #    (ExpoModulesCore 56 ships prebuilt — CocoaPods skips Pods/Headers/Public/ExpoModulesCore.
           #     Pointing FRAMEWORK_SEARCH_PATHS directly at the arm64 slice lets #import <ExpoModulesCore/X.h>
           #     resolve via the framework bundle WITHOUT creating a duplicate copy that xcodebuild also
           #     exposes through XCFrameworkIntermediates. One path, no ODR violations.)
+          # 3. HEADER_SEARCH_PATHS += ExpoModulesCoreShim for the same consumers
+          #    (legacy pods like expo-av 15 import <ExpoModulesCore/EXEventEmitter.h> — a Legacy-API
+          #     protocol header that exists in the expo-modules-core npm source but is NOT shipped in
+          #     the xcframework's public Headers. The shim dir is populated AFTER pod install with
+          #     ONLY the headers missing from the xcframework, so no header is ever reachable via
+          #     both -I and -F — preserving the no-ODR invariant.)
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -106,6 +112,9 @@ jobs:
               "                      ExpoLinearGradient ExpoMediaLibrary ExpoNetwork\n"
               "                      ExpoScreenOrientation ExpoSplashScreen ExpoStatusBar\n"
               "                      ExpoVideoThumbnails ExpoWebBrowser RNVoice]\n"
+              "  # Shim dir for Legacy-API headers absent from the prebuilt xcframework\n"
+              "  # (populated by the 'Create ExpoModulesCore legacy header shim' CI step after pod install).\n"
+              "  shim_dir = '$(PODS_ROOT)/../ExpoModulesCoreShim'\n"
               "  installer.pods_project.targets\n"
               "    .select { |t| expo_consumers.include?(t.name) }\n"
               "    .each do |target|\n"
@@ -115,6 +124,12 @@ jobs:
               "        when Array  then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = (fsp + [xcf_arm64]).uniq\n"
               "        when String then config.build_settings['FRAMEWORK_SEARCH_PATHS'] = fsp + ' ' + xcf_arm64\n"
               "        else             config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(inherited) ' + xcf_arm64\n"
+              "        end\n"
+              "        hsp = config.build_settings['HEADER_SEARCH_PATHS']\n"
+              "        case hsp\n"
+              "        when Array  then config.build_settings['HEADER_SEARCH_PATHS'] = (hsp + [shim_dir]).uniq\n"
+              "        when String then config.build_settings['HEADER_SEARCH_PATHS'] = hsp + ' ' + shim_dir\n"
+              "        else             config.build_settings['HEADER_SEARCH_PATHS'] = '$(inherited) ' + shim_dir\n"
               "        end\n"
               "      end\n"
               "    end\n"
@@ -130,6 +145,39 @@ jobs:
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
+
+      - name: Create ExpoModulesCore legacy header shim
+        working-directory: mobile/ios
+        run: |
+          # expo-av 15 (and other Legacy-API pods) import <ExpoModulesCore/EXEventEmitter.h> etc.
+          # These Legacy protocol headers exist in the expo-modules-core npm SOURCE
+          # (node_modules/expo-modules-core/ios/Legacy/...) but are NOT shipped in the prebuilt
+          # xcframework's public Headers. Copy into a shim dir ONLY the headers that are absent
+          # from the xcframework — so every header stays reachable through exactly ONE search
+          # mechanism (shim via -I, framework headers via -F). Never copy a header that exists
+          # in the framework: that recreates the dual-path ODR failure from run 3.
+          # Swift.h is excluded: it does `#import "ExpoModulesCore-Swift.h"` (a generated header
+          # that only exists inside the built framework), so a shim copy can never compile.
+          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
+          SHIM="ExpoModulesCoreShim/ExpoModulesCore"
+          test -d "$XCF_HDR" || { echo "ERROR: xcframework Headers not found at $XCF_HDR"; exit 1; }
+          mkdir -p "$SHIM"
+          copied=0; skipped=0
+          while IFS= read -r -d '' h; do
+            name=$(basename "$h")
+            [ "$name" = "Swift.h" ] && continue
+            if [ -f "$XCF_HDR/$name" ]; then
+              skipped=$((skipped+1))
+            elif [ ! -f "$SHIM/$name" ]; then
+              cp "$h" "$SHIM/$name"
+              copied=$((copied+1))
+            fi
+          done < <(find ../node_modules/expo-modules-core/ios -name '*.h' -print0)
+          echo "Copied $copied headers absent from xcframework; skipped $skipped present in framework"
+          echo "=== Shim contents ==="
+          ls "$SHIM"
+          echo "=== Sanity: EXEventEmitter.h must be in shim ==="
+          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING — expo-modules-core source layout changed"; exit 1; }
 
       - name: Diagnose ExpoModulesCore xcframework headers
         working-directory: mobile/ios
