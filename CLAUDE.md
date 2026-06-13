@@ -53,7 +53,7 @@ Env vars in `mobile/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANO
 - Download artifact → drag into AltStore → signs with free Apple ID → installs on iPhone
 - AltStore re-signs every 7 days automatically over WiFi
 
-## CI Build Breakage: expo-av vs SDK 56 (runs 39–66, June 2026)
+## CI Build Breakage: expo-av vs SDK 56 (runs 39–83, June 2026) — RESOLVED run 83
 
 **Root cause — why build 38 worked and 39+ didn't**: run 38 (commit `e9b28b0`) was the
 last build WITHOUT expo-av. Run 39's commit `1df9bc5` added `expo-av ~15.0.0` to fix the
@@ -73,7 +73,10 @@ expo-av COMPILE; runtime behavior on device is unverified.
 | `mobile/ci/expo-legacy-shim/ExpoModulesCore/*.h` (31 vendored Legacy headers from expo-modules-core 3.0.30) + "Create ExpoModulesCore legacy header shim" step (copy-if-absent vs xcframework Headers) | `'ExpoModulesCore/EXEventEmitter.h' file not found` — expo-modules-core 56.x deleted `ios/Legacy/` from npm AND omits those headers from the prebuilt xcframework | 58 |
 | "Wire EXAV xcconfig" step → `HEADER_SEARCH_PATHS += shim dir + Pods/React-Core-prebuilt/React.xcframework/Headers`, `OTHER_CFLAGS/OTHER_CPLUSPLUSFLAGS/OTHER_SWIFT_FLAGS += -ivfsoverlay React-VFS.yaml` | `'React/RCTBridgeModule.h' file not found` — RN 0.85 ships React-Core prebuilt; flat `<React/X.h>` names exist ONLY through the clang VFS overlay, and RN wires it only into pods depending on `React-Core` (expo-av depends on `ReactCommon/turbomodule/core`) | 65 |
 | "Patch expo-av Swift" step (rewrites `VideoViewModule.swift` resolver closure) | `Promise.ResolveClosure` retyped to `(JavaScriptValue) -> Void` in ExpoModulesCore 56 | 66 |
-| `EXLegacyCompat.h` force-included via `-include` in EXAV OTHER_CFLAGS | `EXFatal`/`EXErrorWithMessage` undeclared — deleted from expo-modules-core 56 (symbol gone too, so static-inline reimplementation, not a declaration) | pending |
+| `EXLegacyCompat.h` force-included via `-include` in EXAV OTHER_CFLAGS | `EXFatal`/`EXErrorWithMessage` undeclared — deleted from expo-modules-core 56 (symbol gone too, so static-inline reimplementation, not a declaration) | 67 |
+| "Remove expo-av video Swift files" step deletes `VideoViewModule.swift` + `ExpoVideoView.swift`, patches `EXAV.m` (remove `EXAV-Swift.h` import, replace `ExpoVideoView`→`EXVideoView`), patches `EXAV.h` (`EXEventEmitter` import → `@protocol EXEventEmitter;` forward decl), patches `expo-module.config.json` (remove `VideoViewModule` from `apple.modules`) | EXAV Swift files trigger `-import-underlying-module` → ObjC module build → framework EXEventEmitter.h lookup fails; ExpoVideoView deleted Swift class referenced at runtime; EXAV-Swift.h never generated when no Swift files; expo-configure-project.sh (Xcode build phase) REGENERATES ExpoModulesProvider.swift at build time from expo-module.config.json, overwriting any post-install patch | 73–80 |
+| "Remove VideoViewModule from generated Expo scripts" step patches `expo-configure-project.sh` (sed removes VideoViewModule lines) + `ExpoModulesProvider.swift` (Python re.sub belt-and-suspenders) | Belt-and-suspenders for case where module list baked into shell script vs re-read from JSON | 80 |
+| `EXLegacyProtocolStubs.m` (base64-decoded into expo-av source tree, compiled into libEXAV.a) — defines `EXEventEmitter` + `EXLegacyExpoViewProtocol` protocols with `__attribute__((constructor))` function referencing them | `Undefined symbols for architecture arm64: __OBJC_PROTOCOL_$_EXEventEmitter` + `__OBJC_PROTOCOL_$_EXLegacyExpoViewProtocol` — deleted from expo-modules-core 56 xcframework binary; EXAV.o and EXVideoView.o reference them at link time | 83 ✅ |
 
 **Hard-won rules (violating these re-breaks the build)**:
 - NEVER copy xcframework headers into `Pods/Headers/Public/ExpoModulesCore/` — same header
