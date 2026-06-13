@@ -109,6 +109,23 @@ jobs:
               n = patched.count('ExpoVideoView')
               print(f'Replaced {n} ExpoVideoView reference(s) with EXVideoView in {path}')
           open(path, 'w').write(patched2)
+          # 3. Patch EXAV.h: replace <ExpoModulesCore/EXEventEmitter.h> with a forward declaration.
+          # ExpoModulesProvider.swift (Pods-LifeOS) imports the EXAV Clang module. That triggers
+          # module compilation via EXAV-umbrella.h → EXAV.h:10 → EXEventEmitter.h. Module builds
+          # use framework module lookup (-F XCFrameworkIntermediates) which does NOT have
+          # EXEventEmitter.h (xcframework omits it). Our shim only works in CompileC (-I) mode.
+          # A forward declaration is sufficient for the @interface conformance declaration in EXAV.h;
+          # full definition is available via -I shim when EXAV.m is compiled as CompileC.
+          h_path = 'node_modules/expo-av/ios/EXAV/EXAV.h'
+          h_src = open(h_path).read()
+          h_old = '#import <ExpoModulesCore/EXEventEmitter.h>'
+          h_new = '@protocol EXEventEmitter;'
+          h_patched = h_src.replace(h_old, h_new, 1)
+          if h_patched == h_src:
+              print(f'EXEventEmitter import not found in {h_path} — already patched or version changed')
+          else:
+              open(h_path, 'w').write(h_patched)
+              print(f'Replaced EXEventEmitter import with forward decl in {h_path}')
           PYEOF
 
       - name: Write .env file
