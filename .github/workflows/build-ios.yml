@@ -187,34 +187,25 @@ jobs:
       - name: Create ExpoModulesCore legacy header shim
         working-directory: mobile/ios
         run: |
-          # -I shim for any direct ObjC compilation paths that don't use framework lookup.
-          # Since the inject step above already put legacy headers into the xcframework,
-          # most headers will be skipped here (present in framework → skip). The shim dir
-          # ends up empty or nearly empty; the -I path is harmless.
-          # Keeping this step preserves the EXAV HEADER_SEARCH_PATHS wiring in the xcconfig
-          # step below without requiring further changes.
-          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
+          # Copy ALL 31 legacy headers unconditionally into ExpoModulesCoreShim/ExpoModulesCore/.
+          # EXAV's xcconfig (wired below) adds -I ExpoModulesCoreShim, so clang resolves
+          # <ExpoModulesCore/EXEventEmitter.h> → ExpoModulesCoreShim/ExpoModulesCore/EXEventEmitter.h.
+          # We do NOT skip headers that are already in the xcframework: the inject step (above)
+          # puts them there, but Xcode's XCFrameworkIntermediates copy is sometimes stale or
+          # incomplete (observed in run 71). The shim is the reliable fallback for pure-ObjC
+          # compilation (no Swift files → no -import-underlying-module → -I works fine here).
+          # None of the 31 legacy headers exist in the modern expo-modules-core 56.x xcframework,
+          # so there is no ODR risk from having them in both locations.
           VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
           SHIM="ExpoModulesCoreShim/ExpoModulesCore"
-          test -d "$XCF_HDR" || { echo "ERROR: xcframework Headers not found at $XCF_HDR"; exit 1; }
           test -d "$VENDORED" || { echo "ERROR: vendored shim headers not found at $VENDORED"; exit 1; }
           mkdir -p "$SHIM"
-          copied=0; skipped=0
-          for h in "$VENDORED"/*.h; do
-            name=$(basename "$h")
-            if [ -f "$XCF_HDR/$name" ]; then
-              skipped=$((skipped+1))
-            else
-              cp "$h" "$SHIM/$name"
-              copied=$((copied+1))
-            fi
-          done
-          echo "Copied $copied headers absent from xcframework; skipped $skipped present in framework"
-          echo "=== Shim contents (expect mostly empty after xcframework injection) ==="
-          ls "$SHIM" 2>/dev/null || echo "(empty)"
-          echo "=== Sanity: EXEventEmitter.h in xcframework OR shim ==="
-          { test -f "$XCF_HDR/EXEventEmitter.h" || test -f "$SHIM/EXEventEmitter.h"; } \
-            && echo "OK" || { echo "MISSING from both xcframework and shim"; exit 1; }
+          cp "$VENDORED"/*.h "$SHIM/"
+          echo "Copied $(ls "$SHIM" | wc -l | tr -d ' ') headers to shim"
+          echo "=== Shim contents ==="
+          ls "$SHIM"
+          echo "=== Sanity: EXEventEmitter.h in shim ==="
+          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING"; exit 1; }
 
       - name: Wire EXAV xcconfig (shim + React-VFS overlay)
         working-directory: mobile/ios
