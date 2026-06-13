@@ -78,6 +78,51 @@ expo-av COMPILE; runtime behavior on device is unverified.
 | "Remove VideoViewModule from generated Expo scripts" step patches `expo-configure-project.sh` (sed removes VideoViewModule lines) + `ExpoModulesProvider.swift` (Python re.sub belt-and-suspenders) | Belt-and-suspenders for case where module list baked into shell script vs re-read from JSON | 80 |
 | `EXLegacyProtocolStubs.m` (base64-decoded into expo-av source tree, compiled into libEXAV.a) — defines `EXEventEmitter` + `EXLegacyExpoViewProtocol` protocols with `__attribute__((constructor))` function referencing them | `Undefined symbols for architecture arm64: __OBJC_PROTOCOL_$_EXEventEmitter` + `__OBJC_PROTOCOL_$_EXLegacyExpoViewProtocol` — deleted from expo-modules-core 56 xcframework binary; EXAV.o and EXVideoView.o reference them at link time | 83 ✅ |
 
+**Post-mortem: what worked, what failed, and why**
+
+The core problem was two orthogonal compilation paths with different header lookup rules:
+
+| Path | Triggered by | Header lookup | Shim works? |
+|---|---|---|---|
+| **CompileC** | Direct `.m` compilation | `-I` (flat dirs) | ✅ yes |
+| **Module build** | Swift files in pod → `-import-underlying-module` | `-F` (framework lookup into XCFrameworkIntermediates) | ❌ no — xcframework slice omits legacy headers |
+
+Every single error in this saga was one of these paths hitting a missing symbol or header. The shim we built fixes CompileC but can never fix module builds — those use a completely separate framework copy that Xcode assembles from the xcframework slice at build time, and injecting files there has no effect.
+
+**What worked and why:**
+
+- **Vendored 31 legacy headers + `-I` shim** (run 58): Gave CompileC path access to headers expo-modules-core 56 deleted. Correct — this is the only safe place to inject them.
+
+- **VFS overlay for `<React/X.h>`** (run 65): RN 0.85 ships React-Core as a prebuilt xcframework and wires the VFS flat-root only into pods that directly depend on `React-Core`. expo-av depends on `ReactCommon/turbomodule/core`, not `React-Core`, so it never got the overlay. Adding `-ivfsoverlay React-VFS.yaml` to EXAV's xcconfig fixed it. Correct — understand the dependency graph before assuming "all pods get the same flags."
+
+- **`EXLegacyCompat.h` force-include via `-include`** (runs 67+): `EXFatal` and `EXErrorWithMessage` were deleted as both declaration AND symbol from expo-modules-core 56. A header forward-declaration would compile but fail at link. Static-inline reimplementation in a force-included header bypasses both problems — no symbol reference, no link dependency.
+
+- **Deleting Swift files (`VideoViewModule.swift`, `ExpoVideoView.swift`)** (run 73+): Swift files in a CocoaPods static pod trigger `-import-underlying-module` at compile time. That forces a module build of the pod's umbrella header. Module builds use `-F XCFrameworkIntermediates` — the xcframework slice copy — which never has the legacy headers we injected. Removing the Swift files eliminates the module build path entirely. This was the right lever; all the header injection into the xcframework was wrong.
+
+- **Forward declarations in `EXAV.h` and other expo-av headers** (runs 76–77): After deleting the Swift files, ExpoModulesProvider.swift still `import`s the EXAV Clang module (module map exists from pod install). That triggers a module compilation. Forward decls (`@protocol EXEventEmitter;`) let module compilation succeed — full definitions are only needed in the `.m` CompileC path, where the shim provides them.
+
+- **Patching `expo-module.config.json` + `expo-configure-project.sh`** (run 80): The [Expo] Configure project Xcode build phase regenerates `ExpoModulesProvider.swift` from `expo-module.config.json` at BUILD TIME, after our post-install patch. Patching the JSON source prevents both the pod-install generation and the build-time regeneration from knowing about VideoViewModule. Patching the generated shell script is belt-and-suspenders for the "baked-in list" case.
+
+- **`EXLegacyProtocolStubs.m` with `__attribute__((constructor))`** (run 83): Compilation succeeded but the linker couldn't find `__OBJC_PROTOCOL_$_EXEventEmitter` or `__OBJC_PROTOCOL_$_EXLegacyExpoViewProtocol` — deleted from expo-modules-core 56 binary. ObjC protocol metaclass objects only exist in the binary if a compiled `.m` file DEFINES the protocol AND references it with `@protocol(X)`. Injecting a stub `.m` into expo-av's source tree before pod install causes CocoaPods to compile it into `libEXAV.a`, providing the linker symbols. The `__attribute__((constructor))` function scope allows `@protocol()` runtime expressions (not valid as static initializers) and prevents dead-strip.
+
+**What failed and why:**
+
+- **Copying headers into `Pods/Headers/Public/ExpoModulesCore/`** (`a1d422c`): Created a second path to the same headers — once via `-I Pods/Headers/Public/ExpoModulesCore` AND once via `-F XCFrameworkIntermediates/ExpoModulesCore.framework/Headers`. ObjC ODR: two definitions of the same `typedef` → redefinition errors. Rule: only one path per header, ever.
+
+- **`target.build_settings` in Podfile `post_install`** (run 64): Expo's and RN's own `post_install` hooks run AFTER ours and merge our scalar string value into a Ruby array. When Xcode serializes that, it becomes one giant `-I["path1", "path2"]` argument — syntactically invalid. Must edit xcconfig files directly after pod install.
+
+- **Injecting headers into the xcframework** (runs 71–72): Xcode's "Copy XCFrameworks" build phase copies the xcframework slice into `XCFrameworkIntermediates/`. It ONLY copies files that were originally in the slice — injected files are silently ignored. The xcframework is read-only from Xcode's perspective.
+
+- **`DEFINES_MODULE = NO` in xcconfig** (`d27cf16`): CocoaPods generates the EXAV module map during `pod install`, before our xcconfig patch runs. Xcode's module build uses the pre-existing module map; `DEFINES_MODULE=NO` in the xcconfig has no effect on an already-generated module map.
+
+- **Patching `ExpoModulesProvider.swift` after pod install** (runs 78–79): The [Expo] Configure project build phase (wired in the LifeOS Xcode project) runs `expo-configure-project.sh` at build time, regenerating the file. Our patch was correct but got overwritten before compilation.
+
+- **`ExpoUseSources = true`** (`4e00d63`): Attempted to build expo-modules-core from source instead of xcframework. Failed — the Swift compiler version mismatch (xcframework compiled with Swift 6.3.1, runner has Swift 6.2.3) manifests differently in source mode. Also significantly increases build time.
+
+- **Static `void *` initializer for `@protocol()`** (run 82): `@protocol(EXEventEmitter)` is an ObjC runtime expression, not a compile-time constant. Valid inside a function body; invalid as a file-scope static initializer. Clang correctly rejects it with "initializer element is not a compile-time constant."
+
+**The meta-lesson**: this entire saga was ~45 CI runs because each fix only addressed the topmost error layer. The real fix was always "understand WHICH compilation path is hitting WHICH missing piece, and fix the right path." The two-path model (CompileC vs module build) explains every single failure.
+
 **Hard-won rules (violating these re-breaks the build)**:
 - NEVER copy xcframework headers into `Pods/Headers/Public/ExpoModulesCore/` — same header
   reachable via both `-I` and `-F` → ODR redefinition errors (run 3-of-saga / `a1d422c`).
