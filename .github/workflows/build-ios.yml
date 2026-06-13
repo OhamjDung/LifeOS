@@ -146,66 +146,59 @@ jobs:
         working-directory: mobile/ios
         run: pod install
 
-      - name: Inject legacy headers into ExpoModulesCore xcframework
+      - name: Diagnose ExpoModulesCore xcframework native headers
         working-directory: mobile/ios
         run: |
-          # expo-av 15 imports <ExpoModulesCore/EXEventEmitter.h> etc. via angle-bracket
-          # (framework-style) imports. expo-modules-core 56.x deleted legacy module-API headers
-          # from its xcframework. A -I shim works for direct ObjC source compilation but NOT
-          # for Objective-C module compilation: when Swift code does @import EXAV, Xcode compiles
-          # the EXAV module map using framework lookup (-F) and the -I shim is ignored, giving
-          # "did not find header in framework 'ExpoModulesCore'" (run 68).
-          # Fix: inject the missing legacy headers directly into every xcframework slice so that
-          # framework lookup finds them. The -I shim step below then sees them as "present in
-          # xcframework" and skips them — exactly one copy in exactly one location, no ODR risk.
-          XCF_DIR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework"
+          # Diagnostic only: show which legacy headers ARE natively in the xcframework
+          # vs which are missing (and will be provided by the shim step below).
+          # Run 72 lesson: injecting headers into the xcframework does NOT propagate to
+          # XCFrameworkIntermediates — Xcode only copies files that were originally there.
+          # Run 72 also showed EXPermissionsInterface.h IS natively present (modern version)
+          # and must NOT be in the shim (causes redefinition with different typedef style).
+          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
           VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
-          test -d "$XCF_DIR" || { echo "ERROR: xcframework not found at $XCF_DIR"; exit 1; }
-          test -d "$VENDORED" || { echo "ERROR: vendored shim headers not found at $VENDORED"; exit 1; }
-          total_injected=0; total_skipped=0
-          for slice_hdr in "$XCF_DIR"/*/ExpoModulesCore.framework/Headers; do
-            [ -d "$slice_hdr" ] || continue
-            injected=0; skipped_slice=0
-            for h in "$VENDORED"/*.h; do
-              name=$(basename "$h")
-              if [ ! -f "$slice_hdr/$name" ]; then
-                cp "$h" "$slice_hdr/$name"
-                injected=$((injected+1))
-              else
-                skipped_slice=$((skipped_slice+1))
-              fi
-            done
-            slice=$(basename $(dirname $(dirname "$slice_hdr")))
-            echo "  $slice: injected $injected, already-present $skipped_slice"
-            total_injected=$((total_injected+injected))
-            total_skipped=$((total_skipped+skipped_slice))
+          echo "=== xcframework slices ==="
+          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ 2>/dev/null || echo "xcframework not found"
+          echo "=== ios-arm64 native headers (first 40) ==="
+          ls "$XCF_HDR/" 2>/dev/null | head -40 || echo "arm64 headers not found"
+          echo "=== Legacy headers present vs missing in xcframework ==="
+          for h in "$VENDORED"/*.h; do
+            name=$(basename "$h")
+            if [ -f "$XCF_HDR/$name" ]; then echo "  PRESENT: $name"; else echo "  MISSING: $name"; fi
           done
-          echo "Total: injected $total_injected, already-present $total_skipped"
-          echo "=== Sanity: EXEventEmitter.h in xcframework ==="
-          find "$XCF_DIR" -name "EXEventEmitter.h" | head -5
 
       - name: Create ExpoModulesCore legacy header shim
         working-directory: mobile/ios
         run: |
-          # Copy ALL 31 legacy headers unconditionally into ExpoModulesCoreShim/ExpoModulesCore/.
-          # EXAV's xcconfig (wired below) adds -I ExpoModulesCoreShim, so clang resolves
+          # Copy only legacy headers MISSING from the xcframework into ExpoModulesCoreShim/.
+          # EXAV's xcconfig (wired below) adds -I ExpoModulesCoreShim, so clang finds
           # <ExpoModulesCore/EXEventEmitter.h> → ExpoModulesCoreShim/ExpoModulesCore/EXEventEmitter.h.
-          # We do NOT skip headers that are already in the xcframework: the inject step (above)
-          # puts them there, but Xcode's XCFrameworkIntermediates copy is sometimes stale or
-          # incomplete (observed in run 71). The shim is the reliable fallback for pure-ObjC
-          # compilation (no Swift files → no -import-underlying-module → -I works fine here).
-          # None of the 31 legacy headers exist in the modern expo-modules-core 56.x xcframework,
-          # so there is no ODR risk from having them in both locations.
+          # We skip headers that ARE natively in the xcframework to avoid ODR conflicts:
+          # - Run 72: EXPermissionsInterface.h is in modern xcframework (different typedef style);
+          #   having both triggers "redefinition of EXPermissionStatus".
+          # We do NOT inject into the xcframework (run 71/72 showed Xcode's XCFrameworkIntermediates
+          # only copies originally-present headers; injected files are silently ignored).
+          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
           VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
           SHIM="ExpoModulesCoreShim/ExpoModulesCore"
+          test -d "$XCF_HDR" || { echo "ERROR: xcframework arm64 Headers not found at $XCF_HDR"; exit 1; }
           test -d "$VENDORED" || { echo "ERROR: vendored shim headers not found at $VENDORED"; exit 1; }
           mkdir -p "$SHIM"
-          cp "$VENDORED"/*.h "$SHIM/"
-          echo "Copied $(ls "$SHIM" | wc -l | tr -d ' ') headers to shim"
+          copied=0; skipped=0
+          for h in "$VENDORED"/*.h; do
+            name=$(basename "$h")
+            if [ -f "$XCF_HDR/$name" ]; then
+              skipped=$((skipped+1))
+            else
+              cp "$h" "$SHIM/$name"
+              copied=$((copied+1))
+            fi
+          done
+          echo "Copied $copied headers missing from xcframework; skipped $skipped present in xcframework"
           echo "=== Shim contents ==="
-          ls "$SHIM"
+          ls "$SHIM" 2>/dev/null || echo "(empty)"
           echo "=== Sanity: EXEventEmitter.h in shim ==="
-          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING"; exit 1; }
+          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING from shim (may be in xcframework natively)"; }
 
       - name: Wire EXAV xcconfig (shim + React-VFS overlay)
         working-directory: mobile/ios
@@ -225,7 +218,10 @@ jobs:
           # expo-modules-core 56 (declaration AND symbol), still used across expo-av's ObjC.
           compat_h = '"${PODS_ROOT}/../../ci/expo-legacy-shim/EXLegacyCompat.h"'
           hsp_add = ' "${PODS_ROOT}/../ExpoModulesCoreShim" "${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers"'
-          cflags_add = f' -ivfsoverlay {vfs_yaml} -include {compat_h}'
+          # -Wno-non-modular-include-in-framework-module: suppresses the -Werror for
+          # xcframework headers (e.g. EXPermissionsService.h) that transitively include
+          # our shim headers (e.g. EXExportedModule.h) when compiled in EXAV context.
+          cflags_add = f' -ivfsoverlay {vfs_yaml} -include {compat_h} -Wno-non-modular-include-in-framework-module'
           sflags_add = f' -Xcc -ivfsoverlay -Xcc {vfs_yaml}'
           adds = {
               'HEADER_SEARCH_PATHS': hsp_add,
