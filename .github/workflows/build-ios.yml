@@ -223,11 +223,21 @@ jobs:
           # our shim headers (e.g. EXExportedModule.h) when compiled in EXAV context.
           cflags_add = f' -ivfsoverlay {vfs_yaml} -include {compat_h} -Wno-non-modular-include-in-framework-module'
           sflags_add = f' -Xcc -ivfsoverlay -Xcc {vfs_yaml}'
+          # adds: appended to existing value (or added with $(inherited) prefix)
           adds = {
               'HEADER_SEARCH_PATHS': hsp_add,
               'OTHER_CFLAGS': cflags_add,
               'OTHER_CPLUSPLUSFLAGS': cflags_add,
               'OTHER_SWIFT_FLAGS': sflags_add,
+          }
+          # sets: unconditionally overwrite (or add) the key with this value.
+          # DEFINES_MODULE=NO disables Clang module precompilation for EXAV — prevents
+          # Xcode from building the EXAV-umbrella.h module which transitively imports
+          # EXEventEmitter.h via the framework module (xcframework omits that header).
+          # Without this, compilation of EXAV.m succeeds (shim -I works) but the
+          # separate PrecompileModule task fails (run 68).
+          sets = {
+              'DEFINES_MODULE': 'NO',
           }
           for cfg in ('release', 'debug'):
               path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
@@ -239,10 +249,15 @@ jobs:
                   key = line.split('=')[0].strip() if '=' in line else ''
                   if key in adds:
                       lines[i] = line + adds[key]
+                  if key in sets:
+                      lines[i] = f'{key} = {sets[key]}'
                   keys_seen.add(key)
               for key, suffix in adds.items():
                   if key not in keys_seen:
                       lines.append(f'{key} = $(inherited)' + suffix)
+              for key, val in sets.items():
+                  if key not in keys_seen:
+                      lines.append(f'{key} = {val}')
               open(path, 'w').write('\n'.join(lines) + '\n')
               print(f'patched {path}')
           PYEOF
