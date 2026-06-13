@@ -86,6 +86,20 @@ jobs:
                 node_modules/expo-av/ios/EXAV/Video/VideoViewModule.swift
           echo "=== Remaining Swift files in expo-av (expect none) ==="
           find node_modules/expo-av/ios/EXAV -name "*.swift" 2>/dev/null || echo "(none)"
+          # EXAV.m:21 has `#import "EXAV-Swift.h"` — CocoaPods generates this header only when
+          # the pod has Swift files. After removing the Swift files the header is never generated,
+          # causing a fatal "file not found" during EXAV.m compilation. Remove the import.
+          python3 << 'PYEOF'
+          import re
+          path = 'node_modules/expo-av/ios/EXAV/EXAV.m'
+          src = open(path).read()
+          patched = re.sub(r'#import\s+"EXAV-Swift\.h"\s*\n', '', src)
+          if patched == src:
+              print('EXAV-Swift.h import not found — already removed or expo-av version changed')
+          else:
+              open(path, 'w').write(patched)
+              print(f'Removed EXAV-Swift.h import from {path}')
+          PYEOF
 
       - name: Write .env file
         working-directory: mobile
