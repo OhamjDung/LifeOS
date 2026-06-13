@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Personal
+
+Start every message with "Yes, Thomas"
+
 ## graphify
 
 This project has a graphify knowledge graph at graphify-out/.

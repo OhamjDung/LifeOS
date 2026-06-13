@@ -38,122 +38,12 @@ jobs:
         run: |
           echo "=== react-native version installed ==="
           node -e "console.log(require('./node_modules/react-native/package.json').version)"
+          echo "=== expo-audio version ==="
+          node -e "console.log(require('./node_modules/expo-audio/package.json').version)" 2>/dev/null || echo "not found"
           echo "=== reanimated version ==="
           node -e "console.log(require('./node_modules/react-native-reanimated/package.json').version)" 2>/dev/null || echo "not found"
-          echo "=== worklets version ==="
-          node -e "console.log(require('./node_modules/react-native-worklets/package.json').version)" 2>/dev/null || echo "not found"
           echo "=== voice package ==="
           node -e "console.log(require('./node_modules/@react-native-voice/voice/package.json').version)" 2>/dev/null || echo "not found"
-          echo "=== ExpoModulesCore xcframework in node_modules ==="
-          find node_modules/expo-modules-core -name "ExpoModulesCore.xcframework" -maxdepth 5 2>/dev/null || echo "xcframework NOT in node_modules"
-          find node_modules/expo-modules-core/ios -maxdepth 2 2>/dev/null | head -20
-
-      - name: Patch expo-av Swift for ExpoModulesCore 56
-        working-directory: mobile
-        run: |
-          # expo-av 15 predates ExpoModulesCore 56's Promise API change:
-          # Promise.ResolveClosure is now @Sendable (JavaScriptValue) -> Void, but the legacy
-          # ObjC setFullscreen expects EXPromiseResolveBlock (@Sendable (Any?) -> Void).
-          # Promise.resolve(Any?) still exists — wrap it in a matching closure.
-          python3 << 'PYEOF'
-          path = 'node_modules/expo-av/ios/EXAV/Video/VideoViewModule.swift'
-          old = 'resolver: promise.resolver'
-          new = 'resolver: { (value: Any?) in promise.resolve(value) }'
-          src = open(path).read()
-          if new in src:
-              print('already patched')
-          elif old in src:
-              open(path, 'w').write(src.replace(old, new, 1))
-              print('patched', path)
-          else:
-              raise SystemExit(f'ERROR: expected pattern not found in {path} — expo-av version changed?')
-          PYEOF
-
-      - name: Remove expo-av video Swift files (audio-only app; video Swifts trigger fatal module build)
-        working-directory: mobile
-        run: |
-          # ExpoVideoView.swift and VideoViewModule.swift are the sole Swift files in the EXAV pod.
-          # Their presence triggers Swift's -import-underlying-module, which forces an ObjC module
-          # build for EXAV. That build needs <ExpoModulesCore/EXEventEmitter.h> via FRAMEWORK lookup
-          # (-F XCFrameworkIntermediates). XCFrameworkIntermediates is populated by Xcode from the
-          # xcframework slice during the build, and the slice copy does NOT include our injected
-          # legacy headers — framework lookup always fails there. The -I shim works only for direct
-          # ObjC source compilation (CompileC for .m files), not for modular builds.
-          # This app uses expo-av exclusively for Audio.Recording (braindump/notes voice capture);
-          # the video components are never called. Removing these two Swift files makes EXAV
-          # ObjC-only: no SwiftCompile, no -import-underlying-module, no module build failure.
-          rm -f node_modules/expo-av/ios/EXAV/ExpoVideoView.swift \
-                node_modules/expo-av/ios/EXAV/Video/VideoViewModule.swift
-          echo "=== Remaining Swift files in expo-av (expect none) ==="
-          find node_modules/expo-av/ios/EXAV -name "*.swift" 2>/dev/null || echo "(none)"
-          # EXAV.m:21 has `#import "EXAV-Swift.h"` — CocoaPods generates this header only when
-          # the pod has Swift files. After removing the Swift files the header is never generated,
-          # causing a fatal "file not found" during EXAV.m compilation. Remove the import.
-          # EXAV.m:507 uses `[ExpoVideoView class]` — ExpoVideoView was the Swift class from
-          # ExpoVideoView.swift. With that file removed, replace with ObjC EXVideoView (same thing).
-          python3 << 'PYEOF'
-          import re
-          path = 'node_modules/expo-av/ios/EXAV/EXAV.m'
-          src = open(path).read()
-          # 1. Remove EXAV-Swift.h import
-          patched = re.sub(r'#import\s+"EXAV-Swift\.h"\s*\n', '', src)
-          if patched == src:
-              print('EXAV-Swift.h import not found — already removed or expo-av version changed')
-          else:
-              print(f'Removed EXAV-Swift.h import from {path}')
-          # 2. Replace ExpoVideoView (Swift class) with EXVideoView (ObjC class)
-          patched2 = patched.replace('ExpoVideoView', 'EXVideoView')
-          if patched2 == patched:
-              print('ExpoVideoView reference not found — already patched or expo-av version changed')
-          else:
-              n = patched.count('ExpoVideoView')
-              print(f'Replaced {n} ExpoVideoView reference(s) with EXVideoView in {path}')
-          open(path, 'w').write(patched2)
-          # 3. Patch EXAV.h: replace <ExpoModulesCore/EXEventEmitter.h> with a forward declaration.
-          # ExpoModulesProvider.swift (Pods-LifeOS) imports the EXAV Clang module. That triggers
-          # module compilation via EXAV-umbrella.h → EXAV.h:10 → EXEventEmitter.h. Module builds
-          # use framework module lookup (-F XCFrameworkIntermediates) which does NOT have
-          # EXEventEmitter.h (xcframework omits it). Our shim only works in CompileC (-I) mode.
-          # A forward declaration is sufficient for the @interface conformance declaration in EXAV.h;
-          # full definition is available via -I shim when EXAV.m is compiled as CompileC.
-          h_path = 'node_modules/expo-av/ios/EXAV/EXAV.h'
-          h_src = open(h_path).read()
-          h_old = '#import <ExpoModulesCore/EXEventEmitter.h>'
-          h_new = '@protocol EXEventEmitter;'
-          h_patched = h_src.replace(h_old, h_new, 1)
-          if h_patched == h_src:
-              print(f'EXEventEmitter import not found in {h_path} — already patched or version changed')
-          else:
-              open(h_path, 'w').write(h_patched)
-              print(f'Replaced EXEventEmitter import with forward decl in {h_path}')
-          # 4. Patch expo-module.config.json: remove VideoViewModule from apple.modules.
-          # expo-modules-core 56's [Expo] Configure project build phase runs expo-configure-project.sh
-          # at BUILD TIME — AFTER our post-install ExpoModulesProvider.swift patch. That script
-          # regenerates ExpoModulesProvider.swift from expo-module.config.json, overwriting our patch.
-          # Removing VideoViewModule here prevents both the pod-install-time and build-time generation
-          # from ever knowing about VideoViewModule. (expo-av 15 registers AudioModule via the old
-          # Legacy EXModule API — not via expo-module.config.json — so removing this is audio-safe.)
-          import json
-          cfg_path = 'node_modules/expo-av/expo-module.config.json'
-          cfg = json.load(open(cfg_path))
-          for key in ('apple', 'ios'):
-              if key in cfg and 'modules' in cfg[key]:
-                  before = list(cfg[key]['modules'])
-                  cfg[key]['modules'] = [m for m in before if m != 'VideoViewModule']
-                  if cfg[key]['modules'] != before:
-                      json.dump(cfg, open(cfg_path, 'w'), indent=2)
-                      print(f'expo-module.config.json [{key}]: removed VideoViewModule (was {before})')
-                  else:
-                      print(f'expo-module.config.json [{key}]: VideoViewModule not present, no change')
-          PYEOF
-          # 5. Create EXLegacyProtocolStubs.m — provides __OBJC_PROTOCOL_$ linker symbols for
-          # EXEventEmitter and EXLegacyExpoViewProtocol, deleted from expo-modules-core 56 binary.
-          # EXAV.o and EXVideoView.o reference these symbols (class conformance declarations);
-          # CocoaPods compiles this into libEXAV.a providing the symbols at link time.
-          # (base64-encoded to avoid YAML |block indentation issues with ObjC at column 0)
-          echo "Ly8gQ0ktZ2VuZXJhdGVkOiBsaW5rZXIgc3ltYm9scyBmb3IgbGVnYWN5IGV4cG8tbW9kdWxlcy1jb3JlIHByb3RvY29scyBkZWxldGVkIGluIHY1Ni4KI2ltcG9ydCA8Rm91bmRhdGlvbi9Gb3VuZGF0aW9uLmg+CgpAcHJvdG9jb2wgRVhFdmVudEVtaXR0ZXIKLSAodm9pZClzdGFydE9ic2VydmluZzsKLSAodm9pZClzdG9wT2JzZXJ2aW5nOwotIChOU0FycmF5PE5TU3RyaW5nICo+ICopc3VwcG9ydGVkRXZlbnRzOwpAZW5kCgpAcHJvdG9jb2wgRVhMZWdhY3lFeHBvVmlld1Byb3RvY29sCi0gKGluc3RhbmNldHlwZSlpbml0V2l0aE1vZHVsZVJlZ2lzdHJ5OihpZCltb2R1bGVSZWdpc3RyeTsKQGVuZAoKLy8gRm9yY2UgZW1pc3Npb24gb2YgX19PQkpDX1BST1RPQ09MXyRfRVhFdmVudEVtaXR0ZXIgYW5kIEVYTGVnYWN5RXhwb1ZpZXdQcm90b2NvbC4KLy8gQHByb3RvY29sKCkgaW4gZnVuY3Rpb24gc2NvcGUgaXMgbGVnYWwgKG5vdCBhIHN0YXRpYyBpbml0aWFsaXplcik7IGNvbnN0cnVjdG9yIGF0dHJpYnV0ZQovLyBlbnN1cmVzIHRoaXMgcnVucyAoYW5kIHByZXZlbnRzIGRlYWQtc3RyaXAgb2YgdGhlIHByb3RvY29sIG9iamVjdHMpLgpfX2F0dHJpYnV0ZV9fKChjb25zdHJ1Y3RvcikpCnN0YXRpYyB2b2lkIF9wcm92aWRlRXhMZWdhY3lQcm90b2NvbFN5bWJvbHModm9pZCkgewogICAgX191bnVzZWQgUHJvdG9jb2wgKmVlID0gQHByb3RvY29sKEVYRXZlbnRFbWl0dGVyKTsKICAgIF9fdW51c2VkIFByb3RvY29sICpsdiA9IEBwcm90b2NvbChFWExlZ2FjeUV4cG9WaWV3UHJvdG9jb2wpOwp9Cg==" \
-            | base64 -d > node_modules/expo-av/ios/EXAV/EXLegacyProtocolStubs.m
-          echo "Created EXLegacyProtocolStubs.m"
 
       - name: Write .env file
         working-directory: mobile
@@ -187,11 +77,6 @@ jobs:
       - name: Patch Podfile for CI
         working-directory: mobile/ios
         run: |
-          # Single injection into post_install: ENABLE_USER_SCRIPT_SANDBOXING=NO for all targets.
-          # EXAV-specific fixes (legacy shim path, React-VFS overlay flags) are applied by editing
-          # EXAV's xcconfig files in the 'Wire EXAV xcconfig' step AFTER pod install — NOT via
-          # target build_settings here. Run 64 proved Expo/RN's own post_install hooks merge
-          # target-level values into a Ruby array that ends up stringified into the build command.
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
@@ -208,275 +93,21 @@ jobs:
           print('Podfile patched successfully')
           PYEOF
           echo "=== Podfile after patch (post_install section) ==="
-          awk '/post_install/,/^end/' Podfile | head -60
+          awk '/post_install/,/^end/' Podfile | head -30
 
       - name: Install CocoaPods
         working-directory: mobile/ios
         run: pod install
-
-      - name: Remove VideoViewModule from generated Expo scripts
-        working-directory: mobile/ios
-        run: |
-          # expo-modules-core 56 generates two artifacts during pod install that reference VideoViewModule:
-          # 1. ExpoModulesProvider.swift — direct registration; patched here as belt-and-suspenders.
-          # 2. expo-configure-project.sh — the [Expo] Configure project Xcode build phase runs this
-          #    script at BUILD TIME and it REGENERATES ExpoModulesProvider.swift, overwriting any
-          #    post-install patch. Root cause: we already removed VideoViewModule from expo-module.config.json
-          #    above so the build-time regeneration shouldn't include it — but patch the .sh too in case
-          #    the module list is baked into the script (not re-read from JSON at build time).
-          PROVIDER="Pods/Target Support Files/Pods-LifeOS/ExpoModulesProvider.swift"
-          CONFIGURE="Pods/Target Support Files/Pods-LifeOS/expo-configure-project.sh"
-          if [ -f "$CONFIGURE" ]; then
-            # Count VideoViewModule occurrences before patch
-            BEFORE=$(grep -c "VideoViewModule" "$CONFIGURE" 2>/dev/null || echo 0)
-            if [ "$BEFORE" -gt 0 ]; then
-              sed -i.bak '/VideoViewModule/d' "$CONFIGURE"
-              AFTER=$(grep -c "VideoViewModule" "$CONFIGURE" 2>/dev/null || echo 0)
-              echo "expo-configure-project.sh: removed $BEFORE VideoViewModule line(s), $AFTER remaining"
-            else
-              echo "expo-configure-project.sh: no VideoViewModule lines (expo-module.config.json patch worked)"
-            fi
-          else
-            echo "WARNING: expo-configure-project.sh not found at $CONFIGURE"
-          fi
-          if [ -f "$PROVIDER" ]; then
-            python3 << 'PYEOF'
-          import re
-          path = 'Pods/Target Support Files/Pods-LifeOS/ExpoModulesProvider.swift'
-          src = open(path).read()
-          patched = re.sub(r'[^\n]*VideoViewModule[^\n]*\n', '', src)
-          if patched == src:
-              print('ExpoModulesProvider.swift: VideoViewModule not found — already removed (config.json patch worked)')
-          else:
-              open(path, 'w').write(patched)
-              print(f'ExpoModulesProvider.swift: removed VideoViewModule registration')
-          PYEOF
-          else
-            echo "WARNING: ExpoModulesProvider.swift not found at $PROVIDER"
-          fi
-
-      - name: Diagnose ExpoModulesCore xcframework native headers
-        working-directory: mobile/ios
-        run: |
-          # Diagnostic only: show which legacy headers ARE natively in the xcframework
-          # vs which are missing (and will be provided by the shim step below).
-          # Run 72 lesson: injecting headers into the xcframework does NOT propagate to
-          # XCFrameworkIntermediates — Xcode only copies files that were originally there.
-          # Run 72 also showed EXPermissionsInterface.h IS natively present (modern version)
-          # and must NOT be in the shim (causes redefinition with different typedef style).
-          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
-          VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
-          echo "=== xcframework slices ==="
-          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ 2>/dev/null || echo "xcframework not found"
-          echo "=== ios-arm64 native headers (first 40) ==="
-          ls "$XCF_HDR/" 2>/dev/null | head -40 || echo "arm64 headers not found"
-          echo "=== Legacy headers present vs missing in xcframework ==="
-          for h in "$VENDORED"/*.h; do
-            name=$(basename "$h")
-            if [ -f "$XCF_HDR/$name" ]; then echo "  PRESENT: $name"; else echo "  MISSING: $name"; fi
-          done
-
-      - name: Create ExpoModulesCore legacy header shim
-        working-directory: mobile/ios
-        run: |
-          # Copy only legacy headers MISSING from the xcframework into ExpoModulesCoreShim/.
-          # EXAV's xcconfig (wired below) adds -I ExpoModulesCoreShim, so clang finds
-          # <ExpoModulesCore/EXEventEmitter.h> → ExpoModulesCoreShim/ExpoModulesCore/EXEventEmitter.h.
-          # We skip headers that ARE natively in the xcframework to avoid ODR conflicts:
-          # - Run 72: EXPermissionsInterface.h is in modern xcframework (different typedef style);
-          #   having both triggers "redefinition of EXPermissionStatus".
-          # We do NOT inject into the xcframework (run 71/72 showed Xcode's XCFrameworkIntermediates
-          # only copies originally-present headers; injected files are silently ignored).
-          XCF_HDR="Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers"
-          VENDORED="../ci/expo-legacy-shim/ExpoModulesCore"
-          SHIM="ExpoModulesCoreShim/ExpoModulesCore"
-          test -d "$XCF_HDR" || { echo "ERROR: xcframework arm64 Headers not found at $XCF_HDR"; exit 1; }
-          test -d "$VENDORED" || { echo "ERROR: vendored shim headers not found at $VENDORED"; exit 1; }
-          mkdir -p "$SHIM"
-          copied=0; skipped=0
-          for h in "$VENDORED"/*.h; do
-            name=$(basename "$h")
-            if [ -f "$XCF_HDR/$name" ]; then
-              skipped=$((skipped+1))
-            else
-              cp "$h" "$SHIM/$name"
-              copied=$((copied+1))
-            fi
-          done
-          echo "Copied $copied headers missing from xcframework; skipped $skipped present in xcframework"
-          echo "=== Shim contents ==="
-          ls "$SHIM" 2>/dev/null || echo "(empty)"
-          echo "=== Sanity: EXEventEmitter.h in shim ==="
-          test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING from shim (may be in xcframework natively)"; }
-
-      - name: Patch expo-av public headers for Clang module compatibility
-        working-directory: mobile/ios
-        run: |
-          # ExpoModulesProvider.swift imports the EXAV Clang module. Module compilation uses
-          # -F (framework lookup) for <ExpoModulesCore/X.h> imports — the xcframework's module
-          # doesn't include shim-only headers, so those imports fail. Our -I shim only works
-          # in CompileC mode (direct .m compilation), not in module compilation.
-          # Fix: replace every #import <ExpoModulesCore/X.h> in expo-av public .h files where
-          # X.h is shim-only (copied into ExpoModulesCoreShim) with a forward declaration.
-          # Forward declarations are sufficient for @interface conformance declarations in headers;
-          # full definitions are available via -I shim when the .m files are compiled.
-          python3 << 'PYEOF'
-          import os, re, glob
-
-          SHIM = 'ExpoModulesCoreShim/ExpoModulesCore'
-          EXAV_HEADERS = sorted(glob.glob('../node_modules/expo-av/ios/EXAV/**/*.h', recursive=True))
-
-          # Build forward-declaration map from shim headers.
-          # @protocol Foo -> "@protocol Foo;"    @interface Foo -> "@class Foo;"
-          fwd = {}
-          for h in glob.glob(f'{SHIM}/*.h'):
-              name = os.path.basename(h)
-              content = open(h).read()
-              m = re.search(r'@(protocol|interface)\s+(\w+)', content)
-              if m:
-                  kind, sym = m.group(1), m.group(2)
-                  fwd[name] = f'@{kind[:8]} {sym};' if kind == 'protocol' else f'@class {sym};'
-              else:
-                  fwd[name] = ''  # macro-only header — just delete the import
-
-          if not fwd:
-              print('WARNING: shim is empty; skipping expo-av header patching')
-          else:
-              print(f'Shim headers to forward-declare: {sorted(fwd.keys())}')
-
-          total = 0
-          for hfile in EXAV_HEADERS:
-              src = open(hfile).read()
-              patched = src
-              for hname, decl in fwd.items():
-                  old = f'#import <ExpoModulesCore/{hname}>'
-                  if old in patched:
-                      new = decl if decl else f'// {old} (macro-only, removed for module compat)'
-                      patched = patched.replace(old, new)
-                      total += 1
-                      print(f'  {os.path.relpath(hfile)}: {hname} -> {decl or "(removed)"}')
-              if patched != src:
-                  open(hfile, 'w').write(patched)
-          print(f'Done: {total} import(s) replaced across {len(EXAV_HEADERS)} scanned headers')
-          PYEOF
-
-      - name: Wire EXAV xcconfig (shim + React-VFS overlay)
-        working-directory: mobile/ios
-        run: |
-          # Edit EXAV's xcconfig files directly — the same layer Expo/RN use. Patching target
-          # build_settings in post_install gets mangled by Expo/RN's later hooks (run 64: values
-          # merged into a Ruby array and stringified into the build command).
-          # - shim dir: Legacy-API headers absent from the ExpoModulesCore xcframework
-          # - VFS virtual root (-I) + -ivfsoverlay: RN 0.85 prebuilt React resolves <React/X.h>
-          #   through the React-VFS.yaml overlay; expo-av 15 depends on ReactCommon (not
-          #   React-Core) so RN's hook never wires it up (runs 60-64).
-          python3 << 'PYEOF'
-          import os
-          pods_root = os.path.abspath('Pods')
-          vfs_yaml = f'"{pods_root}/React-Core-prebuilt/React-VFS.yaml"'
-          # EXLegacyCompat.h: static-inline EXFatal/EXErrorWithMessage — deleted from
-          # expo-modules-core 56 (declaration AND symbol), still used across expo-av's ObjC.
-          compat_h = '"${PODS_ROOT}/../../ci/expo-legacy-shim/EXLegacyCompat.h"'
-          hsp_add = ' "${PODS_ROOT}/../ExpoModulesCoreShim" "${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers"'
-          # -Wno-non-modular-include-in-framework-module: suppresses the -Werror for
-          # xcframework headers (e.g. EXPermissionsService.h) that transitively include
-          # our shim headers (e.g. EXExportedModule.h) when compiled in EXAV context.
-          cflags_add = f' -ivfsoverlay {vfs_yaml} -include {compat_h} -Wno-non-modular-include-in-framework-module'
-          sflags_add = f' -Xcc -ivfsoverlay -Xcc {vfs_yaml}'
-          # adds: appended to existing value (or added with $(inherited) prefix)
-          adds = {
-              'HEADER_SEARCH_PATHS': hsp_add,
-              'OTHER_CFLAGS': cflags_add,
-              'OTHER_CPLUSPLUSFLAGS': cflags_add,
-              'OTHER_SWIFT_FLAGS': sflags_add,
-          }
-          # sets: unconditionally overwrite (or add) the key with this value.
-          # DEFINES_MODULE=NO disables Clang module precompilation for EXAV — prevents
-          # Xcode from building the EXAV-umbrella.h module which transitively imports
-          # EXEventEmitter.h via the framework module (xcframework omits that header).
-          # Without this, compilation of EXAV.m succeeds (shim -I works) but the
-          # separate PrecompileModule task fails (run 68).
-          sets = {
-              'DEFINES_MODULE': 'NO',
-          }
-          for cfg in ('release', 'debug'):
-              path = f'Pods/Target Support Files/EXAV/EXAV.{cfg}.xcconfig'
-              if not os.path.exists(path):
-                  raise SystemExit(f'ERROR: {path} not found')
-              lines = open(path).read().splitlines()
-              keys_seen = set()
-              for i, line in enumerate(lines):
-                  key = line.split('=')[0].strip() if '=' in line else ''
-                  if key in adds:
-                      lines[i] = line + adds[key]
-                  if key in sets:
-                      lines[i] = f'{key} = {sets[key]}'
-                  keys_seen.add(key)
-              for key, suffix in adds.items():
-                  if key not in keys_seen:
-                      lines.append(f'{key} = $(inherited)' + suffix)
-              for key, val in sets.items():
-                  if key not in keys_seen:
-                      lines.append(f'{key} = {val}')
-              open(path, 'w').write('\n'.join(lines) + '\n')
-              print(f'patched {path}')
-          PYEOF
-          echo "=== EXAV.release.xcconfig after patch (relevant lines) ==="
-          grep -E "OTHER_CFLAGS|OTHER_SWIFT_FLAGS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig"
-          grep -oE 'HEADER_SEARCH_PATHS.{0,80}' "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" | head -1
-
-      - name: Diagnose ExpoModulesCore xcframework headers
-        working-directory: mobile/ios
-        run: |
-          # Diagnostic only — DO NOT copy headers.
-          # Copying creates Pods/Headers/Public/ExpoModulesCore/ (HEADER_SEARCH_PATHS) while
-          # xcodebuild also exposes the same headers via XCFrameworkIntermediates (FRAMEWORK_SEARCH_PATHS).
-          # Two paths → same header compiled twice → ODR redefinition errors at link.
-          # The Podfile post_install patch above adds the xcframework arm64 slice to
-          # FRAMEWORK_SEARCH_PATHS for all Expo consumer pods instead.
-          echo "=== ExpoModulesCore xcframework structure ==="
-          find Pods/ExpoModulesCore -maxdepth 5 -name "*.h" | head -10 || echo "no .h found"
-          echo "=== xcframework slices ==="
-          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ 2>/dev/null || echo "xcframework not found"
-          echo "=== ios-arm64 headers (first 20) ==="
-          ls "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Headers/" 2>/dev/null | head -20 || echo "arm64 headers not found"
-          echo "=== Pods/Headers/Public/ExpoModulesCore (should be EMPTY/absent) ==="
-          ls Pods/Headers/Public/ExpoModulesCore/ 2>/dev/null && echo "WARNING: public header copy exists — will cause ODR" || echo "OK: no public header copy"
-          echo "=== UMAppLoader public headers (ExpoTaskManager dependency) ==="
-          ls Pods/Headers/Public/UMAppLoader/ 2>/dev/null || echo "MISSING: Pods/Headers/Public/UMAppLoader"
-          echo "=== ExpoTaskManager xcconfig search paths ==="
-          grep -E "SEARCH_PATHS" "Pods/Target Support Files/ExpoTaskManager/ExpoTaskManager.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
-          echo "=== EXAV xcconfig search paths ==="
-          grep -E "SEARCH_PATHS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
-          echo "=== React-VFS.yaml (resolved overlay — what maps where) ==="
-          head -60 Pods/React-Core-prebuilt/React-VFS.yaml 2>/dev/null || echo "React-VFS.yaml not found"
-          echo "=== React-Core-prebuilt layout ==="
-          ls Pods/React-Core-prebuilt/ 2>/dev/null
-          ls Pods/React-Core-prebuilt/React.xcframework/ 2>/dev/null
-          echo "=== React.xcframework top-level Headers (first 10) ==="
-          ls Pods/React-Core-prebuilt/React.xcframework/Headers/ 2>/dev/null | head -10 || echo "no top-level Headers"
-          echo "=== react-native-voice xcconfig (working <React/...> consumer) ==="
-          grep -E "OTHER_CFLAGS|SEARCH_PATHS|SWIFT_FLAGS" "Pods/Target Support Files/react-native-voice/react-native-voice.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
-          echo "=== EXAV xcconfig flags ==="
-          grep -E "OTHER_CFLAGS|SWIFT_FLAGS" "Pods/Target Support Files/EXAV/EXAV.release.xcconfig" 2>/dev/null || echo "xcconfig not found"
 
       - name: Debug post-pod-install
         working-directory: mobile/ios
         run: |
           echo "=== Xcode/Swift version ==="
           xcodebuild -version && swift --version
-          echo "=== ExpoModulesCore pod directory ==="
-          ls Pods/ExpoModulesCore/ 2>/dev/null | head -20 || echo "dir not found"
           echo "=== ExpoModulesCore xcframework exists? ==="
-          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework 2>/dev/null && echo "YES - xcframework present" || echo "NO - xcframework absent (will build from source)"
-          echo "=== ExpoModulesCore xcframework Swift version (if present) ==="
-          head -5 "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios.swiftinterface" 2>/dev/null || \
-          head -5 "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64_x86_64-simulator/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios-simulator.swiftinterface" 2>/dev/null || echo "no swiftinterface found"
-          echo "=== ExpoModulesJSI pod directory ==="
-          ls Pods/ExpoModulesJSI/ 2>/dev/null | head -10 || echo "Pods/ExpoModulesJSI not found"
-          echo "=== ExpoModulesJSI in node_modules ==="
-          ls node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/ 2>/dev/null | head -10 || echo "not found at that path"
-          find ../node_modules -name "JSIRepresentable.swift" 2>/dev/null | head -5
+          ls Pods/ExpoModulesCore/ExpoModulesCore.xcframework 2>/dev/null && echo "YES - xcframework present" || echo "NO - xcframework absent"
+          echo "=== ExpoModulesCore xcframework Swift version ==="
+          head -5 "Pods/ExpoModulesCore/ExpoModulesCore.xcframework/ios-arm64/ExpoModulesCore.framework/Modules/ExpoModulesCore.swiftmodule/arm64-apple-ios.swiftinterface" 2>/dev/null || echo "no swiftinterface found"
           echo "=== All xcframeworks in Pods ==="
           find Pods -name "*.xcframework" -maxdepth 4 2>/dev/null | head -20
 
@@ -487,9 +118,6 @@ jobs:
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_BUILD_ID: ci-${{ github.run_number }}
         run: |
-          # NOTE: the shell runs with -e. A plain `pipeline; STATUS=$?` dies at the failing
-          # pipeline before any error extraction runs (this silently skipped error reporting
-          # in runs 1-59). `if ! pipeline` suspends -e for the pipeline itself.
           set -o pipefail
           if ! xcodebuild archive \
             -workspace ios/LifeOS.xcworkspace \

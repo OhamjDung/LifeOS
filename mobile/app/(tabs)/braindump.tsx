@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Audio } from 'expo-av'
+import { AudioModule, setAudioModeAsync } from 'expo-audio'
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, Animated,
@@ -115,9 +115,9 @@ export default function BraindumpScreen() {
       isStartingRef.current = true
       try {
         log('Requesting audio permission + configuring session')
-        const perm = await Audio.requestPermissionsAsync()
+        const perm = await AudioModule.requestRecordingPermissionsAsync()
         log(`Audio permission: ${perm.status}`)
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
+        await setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
         log('Destroying stale session before start')
         await Voice.destroy()
         log('Starting voice en-US')
