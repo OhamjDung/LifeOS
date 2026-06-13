@@ -89,16 +89,26 @@ jobs:
           # EXAV.m:21 has `#import "EXAV-Swift.h"` — CocoaPods generates this header only when
           # the pod has Swift files. After removing the Swift files the header is never generated,
           # causing a fatal "file not found" during EXAV.m compilation. Remove the import.
+          # EXAV.m:507 uses `[ExpoVideoView class]` — ExpoVideoView was the Swift class from
+          # ExpoVideoView.swift. With that file removed, replace with ObjC EXVideoView (same thing).
           python3 << 'PYEOF'
           import re
           path = 'node_modules/expo-av/ios/EXAV/EXAV.m'
           src = open(path).read()
+          # 1. Remove EXAV-Swift.h import
           patched = re.sub(r'#import\s+"EXAV-Swift\.h"\s*\n', '', src)
           if patched == src:
               print('EXAV-Swift.h import not found — already removed or expo-av version changed')
           else:
-              open(path, 'w').write(patched)
               print(f'Removed EXAV-Swift.h import from {path}')
+          # 2. Replace ExpoVideoView (Swift class) with EXVideoView (ObjC class)
+          patched2 = patched.replace('ExpoVideoView', 'EXVideoView')
+          if patched2 == patched:
+              print('ExpoVideoView reference not found — already patched or expo-av version changed')
+          else:
+              n = patched.count('ExpoVideoView')
+              print(f'Replaced {n} ExpoVideoView reference(s) with EXVideoView in {path}')
+          open(path, 'w').write(patched2)
           PYEOF
 
       - name: Write .env file
