@@ -241,6 +241,57 @@ jobs:
           echo "=== Sanity: EXEventEmitter.h in shim ==="
           test -f "$SHIM/EXEventEmitter.h" && echo "OK" || { echo "MISSING from shim (may be in xcframework natively)"; }
 
+      - name: Patch expo-av public headers for Clang module compatibility
+        working-directory: mobile/ios
+        run: |
+          # ExpoModulesProvider.swift imports the EXAV Clang module. Module compilation uses
+          # -F (framework lookup) for <ExpoModulesCore/X.h> imports — the xcframework's module
+          # doesn't include shim-only headers, so those imports fail. Our -I shim only works
+          # in CompileC mode (direct .m compilation), not in module compilation.
+          # Fix: replace every #import <ExpoModulesCore/X.h> in expo-av public .h files where
+          # X.h is shim-only (copied into ExpoModulesCoreShim) with a forward declaration.
+          # Forward declarations are sufficient for @interface conformance declarations in headers;
+          # full definitions are available via -I shim when the .m files are compiled.
+          python3 << 'PYEOF'
+          import os, re, glob
+
+          SHIM = 'ExpoModulesCoreShim/ExpoModulesCore'
+          EXAV_HEADERS = sorted(glob.glob('../node_modules/expo-av/ios/EXAV/**/*.h', recursive=True))
+
+          # Build forward-declaration map from shim headers.
+          # @protocol Foo -> "@protocol Foo;"    @interface Foo -> "@class Foo;"
+          fwd = {}
+          for h in glob.glob(f'{SHIM}/*.h'):
+              name = os.path.basename(h)
+              content = open(h).read()
+              m = re.search(r'@(protocol|interface)\s+(\w+)', content)
+              if m:
+                  kind, sym = m.group(1), m.group(2)
+                  fwd[name] = f'@{kind[:8]} {sym};' if kind == 'protocol' else f'@class {sym};'
+              else:
+                  fwd[name] = ''  # macro-only header — just delete the import
+
+          if not fwd:
+              print('WARNING: shim is empty; skipping expo-av header patching')
+          else:
+              print(f'Shim headers to forward-declare: {sorted(fwd.keys())}')
+
+          total = 0
+          for hfile in EXAV_HEADERS:
+              src = open(hfile).read()
+              patched = src
+              for hname, decl in fwd.items():
+                  old = f'#import <ExpoModulesCore/{hname}>'
+                  if old in patched:
+                      new = decl if decl else f'// {old} (macro-only, removed for module compat)'
+                      patched = patched.replace(old, new)
+                      total += 1
+                      print(f'  {os.path.relpath(hfile)}: {hname} -> {decl or "(removed)"}')
+              if patched != src:
+                  open(hfile, 'w').write(patched)
+          print(f'Done: {total} import(s) replaced across {len(EXAV_HEADERS)} scanned headers')
+          PYEOF
+
       - name: Wire EXAV xcconfig (shim + React-VFS overlay)
         working-directory: mobile/ios
         run: |
