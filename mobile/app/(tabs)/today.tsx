@@ -170,8 +170,8 @@ function TodayTaskRow({ task, onToggle, onRollover }: { task: Task; onToggle: ()
 
   function handleSwipe(dir: 'left' | 'right') {
     swipeRef.current?.close()
-    if (dir === 'right') onToggle()
-    if (dir === 'left' && !done) onRollover()
+    if (dir === 'left') onToggle()
+    if (dir === 'right' && !done) onRollover()
   }
 
   return (
@@ -239,7 +239,7 @@ const s = StyleSheet.create({
   rollBadge:    { fontFamily: MONO, fontSize: 11, color: T.faint, letterSpacing: 1 },
   keepInTouch:  { fontFamily: MONO, fontSize: 11, color: T.clay, letterSpacing: 1 },
   empty: { fontFamily: MONO, fontSize: 14, color: T.faint, textAlign: 'center', paddingVertical: 24 },
-  swipe:     { flex: 1, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 18 },
+  swipe:     { width: 88, justifyContent: 'center', paddingHorizontal: 20, borderRadius: 18 },
   swipeDone: { backgroundColor: '#3D6B4A' },
   swipeRoll: { backgroundColor: '#3C4E6E' },
   swipeText: { fontFamily: MONO, fontSize: 13, color: '#EEF0E6', fontWeight: '600', letterSpacing: 0.5 },

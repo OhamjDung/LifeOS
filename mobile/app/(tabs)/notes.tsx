@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useFocusEffect } from 'expo-router'
 import Constants from 'expo-constants'
+import { AudioModule, setAudioModeAsync } from 'expo-audio'
 import { supabase, supabaseUrl } from '../../lib/supabase'
 import { log, warn, error as logError } from '../../lib/logger'
 import { SkCard, SkKicker, SkChip } from '../../components/Sk'
@@ -110,7 +111,16 @@ export default function NotesScreen() {
     let Voice: any
     try { Voice = require('@react-native-voice/voice').default } catch { return }
     if (listening) { await Voice.stop(); setListening(false) }
-    else { try { await Voice.start('en-US'); setListening(true) } catch { setListening(false) } }
+    else {
+      try {
+        const perm = await AudioModule.requestRecordingPermissionsAsync()
+        if (perm.status !== 'granted') return
+        await setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true })
+        await Voice.destroy()
+        await Voice.start('en-US')
+        setListening(true)
+      } catch { setListening(false) }
+    }
   }
 
   async function saveNoteEdit() {
