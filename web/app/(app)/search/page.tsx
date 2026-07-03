@@ -62,7 +62,7 @@ export default function SearchPage() {
         <button
           type="submit"
           disabled={loading || !query.trim()}
-          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg transition-colors"
+          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-[#DEDAD2] font-medium rounded-lg transition-colors"
         >
           {loading ? '…' : 'Search'}
         </button>

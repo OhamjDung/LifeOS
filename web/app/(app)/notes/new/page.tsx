@@ -20,6 +20,12 @@ export default function NewNotePage() {
       .select('id')
       .single()
     if (!error && data) {
+      console.log('[note] created, triggering fn-embed-note...')
+      const { data: { session } } = await supabase.auth.getSession()
+      fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-embed-note`,
+        { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
+      ).then(r => r.json()).then(b => console.log('[note] fn-embed-note response:', b)).catch(console.error)
       router.push(`/notes/${data.id}`)
     } else {
       setSaving(false)
@@ -38,7 +44,7 @@ export default function NewNotePage() {
         <button
           onClick={handleSave}
           disabled={saving || !content.trim()}
-          className="ml-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+          className="ml-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-[#DEDAD2] text-sm rounded-lg transition-colors"
         >
           {saving ? 'Saving…' : 'Save note'}
         </button>

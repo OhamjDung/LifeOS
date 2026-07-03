@@ -172,7 +172,7 @@ export default function TasksScreen() {
     try {
       await supabase.from('tasks')
         .update({ due_date: todayStr, status: 'pending', updated_at: new Date().toISOString() })
-        .eq('status', 'pending').lt('due_date', todayStr)
+        .eq('status', 'pending').eq('task_type', 'task').lt('due_date', todayStr)
       const { data } = await supabase.from('tasks')
         .select('*, task_tags(tag_id, tags(id,name))')
         .eq('due_date', todayStr).neq('status', 'rolled_over')

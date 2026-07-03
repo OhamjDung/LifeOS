@@ -244,36 +244,50 @@ Tasks have two types (`task_type`):
 - `event` — calendar event, shown with title on calendar, can be linked to a contact
 
 Key task behaviors:
-- **Auto-rollover**: on page load, past pending tasks are moved to today automatically
+- **Auto-rollover**: on page load, past pending `task`-type tasks are moved to today automatically. Events are NOT rolled over — they stay on their original date.
 - **Future scheduling**: `due_date` can be any date, date picker in UI
 - **Rollover count**: `rollover_count` incremented by trigger on each `task_rollovers` insert. Tasks with higher rollover_count sorted first (higher priority). Badge shown at ≥1, orange highlight at ≥3.
 - **Event → contact sync**: completing an event task with `contact_id` set triggers `trg_event_task_contact` → updates `contacts.last_contacted_at`
+- **Tags**: `tags`/`task_tags` tables. Tasks can have multiple tags. First tag shown on task card. `fn-auto-tag` auto-assigns one tag per task via GPT-4o-mini.
+- **Contact badge**: tasks with `contact_id` show "● KEEP IN TOUCH" badge instead of rollover count
 
 ## Web App Structure
 
 ```
 web/app/
   page.tsx                       # root redirect to /dashboard
-  login/page.tsx
+  login/page.tsx                 # neumorphic analog card, IBM Plex Mono, sage button
   auth/callback/route.ts
   proxy.ts                       # auth proxy (Next.js 16 — replaces middleware.ts)
-  (app)/layout.tsx               # auth guard + sidebar (Dashboard, Tasks, Calendar, Braindump, Notes, Search, Contacts)
-  (app)/dashboard/page.tsx
-  (app)/tasks/page.tsx           # auto-rollover past tasks, fetch with rollover_count sort
-  (app)/calendar/page.tsx        # monthly grid: dots for tasks, titles for events, searchParams for month/year
-  (app)/braindump/page.tsx       # text braindump → braindump_jobs
-  (app)/notes/                   # list, new, [id]
+  globals.css                    # @theme inline: warm analog palette (grays→#CCCAC0/#DEDAD2, indigos→sage #516439, white→#1C1A14)
+  layout.tsx                     # IBM Plex Mono font via next/font/google
+  (app)/layout.tsx               # auth guard + <NavBar /> (left sidebar)
+  (app)/dashboard/page.tsx       # LCD metrics panel (dark #2A2F29) + overdue contacts
+  (app)/tasks/page.tsx           # 50/50 split: left=TaskList, right=calendar grid; searchParams m/y/d for month+day selection
+  (app)/calendar/page.tsx        # standalone calendar (still exists; tasks page embeds calendar too)
+  (app)/braindump/page.tsx       # text + voice braindump → braindump_jobs
+  (app)/notes/                   # list (with filter bar), new, [id]
   (app)/search/page.tsx          # semantic search via fn-search-notes
   (app)/contacts/                # list, new, [id]
 web/lib/
   supabase/{client,server,middleware}.ts
   types.ts                       # all shared TypeScript types
 web/components/
-  TaskList.tsx                   # add/complete/rollover/delete tasks — type selector, date picker, contact selector for events
+  NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state)
+  TaskList.tsx                   # add/complete/rollover/delete — "Keep in Touch" section (contact tasks) above regular pending
+  NotesFilter.tsx                # client component: live filter notes by title/content/tag
   NoteEditor.tsx                 # edit/delete note (client)
+  NotesPendingChecker.tsx        # triggers fn-embed-note when pending notes detected
   ContactDetail.tsx              # log events + AI draft message button (client)
   LogoutButton.tsx
 ```
+
+### UI Theme (analog/neumorphic)
+- Palette mapped via Tailwind v4 `@theme inline` — existing class names auto-remap, no per-file changes needed:
+  - `bg-gray-950` → `#CCCAC0` (page bg), `bg-gray-900` → `#DEDAD2` (surface), `bg-gray-800` → `#C4C1B7`
+  - `bg-indigo-600` → `#516439` (sage), `text-white` → `#1C1A14` (dark ink)
+- Sage-bg buttons must use `text-[#DEDAD2]` explicitly (dark ink on dark sage = poor contrast)
+- LCD panels (dashboard metrics) use explicit `style={{ background: '#2A2F29' }}` to stay dark
 
 ## Mobile App Structure
 
@@ -312,7 +326,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | Function | Trigger | Does |
 |---|---|---|
 | `fn-process-braindump` | pg_cron every 2 min | GPT-4o extracts tasks, cosine dedup (0.85/0.65 thresholds) |
-| `fn-embed-note` | pg_cron every 2 min | Paragraph chunks → embeddings → GPT-4o-mini category+tags |
+| `fn-embed-note` | pg_cron every 2 min | Paragraph chunks → embeddings → semantic search for top-5 similar notes → GPT-4o-mini category+tags (uses ±2h temporal context + semantic context + existing tags library) |
 | `fn-search-notes` | HTTP POST from client | Embeds query → calls `search_notes()` DB function |
 | `fn-draft-catchup` | HTTP POST from client | GPT-4o-mini drafts catch-up message for a contact |
 | `fn-auto-tag` | HTTP POST from client | GPT-4o-mini picks best tag from user's tag list for a task |
@@ -326,13 +340,16 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 - All tables use RLS (`auth.uid() = user_id`). Always pass `user_id: user?.id` explicitly on inserts (no server-side default).
 - `braindump_jobs` and `notes`: Edge Functions set `processing_status='processing'` before AI call, `done/failed` after. `retry_count` max 3 enforced in query (`lt('retry_count', 3)`).
+- `braindump_jobs.categories`: TEXT[] column (added in migrations_v3.sql), e.g. `['Tasks', 'Contacts']`. Controls what fn-process-braindump extracts.
 - `tasks.rollover_count`: incremented by `trg_increment_rollover_count` trigger on `task_rollovers` insert. Backfilled from existing rows via `migrations.sql`.
 - `tasks.contact_id`: optional FK to contacts. `trg_event_task_contact` trigger updates `contacts.last_contacted_at` when event task marked done.
 - `contact_events` with `event_type in ('photo_sent','message_sent','met')` also auto-update `contacts.last_contacted_at` via `trg_last_contacted` trigger.
 - `note_chunks.embedding` uses HNSW index (`vector_cosine_ops`, m=16, ef_construction=64). `search_notes()` DB function handles cosine similarity search.
-- `tags` + `task_tags`: user-defined tags; `fn-auto-tag` auto-assigns one tag per task via GPT-4o-mini.
+- `tags` + `task_tags`: user-defined tags; `fn-auto-tag` auto-assigns one tag per task via GPT-4o-mini. Also `contact_tags` table for contact tags (mobile only).
 - `widget_registrations`: maps `widget_id` (UUID generated on iOS) → `user_id`. No JWT needed — widget uses `widget_id` as credential for `fn-widget-data` / `fn-widget-action`.
-- `contacts.contact_tier`: enum `daily|weekly|biweekly|monthly` — drives overdue badge logic via `CONTACT_TIER_DAYS` map (`1/7/14/30` days).
+- `contacts.contact_tier`: enum `daily|weekly|biweekly|monthly` — drives overdue badge logic via `CONTACT_TIER_DAYS` map (`1/7/14/30` days). Added in migrations_v2.sql.
+- `contacts.relationship_tier`: enum `family|close_friend|friend|acquaintance` — used by `fn-draft-catchup` for AI tone selection. Both tiers coexist; `contact_tier` drives CRM timing, `relationship_tier` drives AI tone.
+- When creating contacts, write both: `contact_tier` (user-selected frequency) + `relationship_tier: 'friend'` (default, for AI drafts).
 
 ## Build Phase Status
 
@@ -340,13 +357,17 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 |---|---|
 | 0 — CRUD foundation | ✅ Done |
 | 1 — Voice braindump (mobile) | ⏳ Code ready, needs dev client build (Apple Dev account or GitHub Actions + AltStore) |
+| 1b — Voice braindump (web) | ✅ Done — Web Speech API (SpeechRecognition), graceful fallback if unsupported |
 | 2 — AI task extraction + dedup | ✅ Done |
-| 3 — Contextual modes / geofencing | ⏳ Code ready, needs dev client build |
+| 3 — Contextual modes / geofencing | ⏳ Mobile only, needs dev client build. Web: N/A (GPS geofencing not applicable) |
 | 4 — CRM (web + AI drafts) | ✅ Done (push notifications need APNs) |
 | 5 — Notes + semantic search | ✅ Done |
-| 6 — Task events + calendar view | ✅ Done |
+| 6 — Task events + calendar view | ✅ Done — calendar now has day selection + task detail panel (web) |
 | 7 — Mobile notes with voice | ⏳ Code ready, needs dev client build |
 | 8 — iOS widget (tasks/events) | ✅ Done — HTTP polling via Supabase, no App Group required; `connect-widget.tsx` registers widget |
 | 9 — Tags + AI auto-tag | ✅ Done — `tags`/`task_tags` tables, `fn-auto-tag` edge function |
-| 10 — Today dashboard (mobile) | ✅ Done — `today.tsx` shows tasks + overdue contacts |
-| 11 — In-app debug logs | ✅ Done — `logs.tsx` + `lib/logger.ts` ring buffer |
+| 10 — Today dashboard | ✅ Done — mobile `today.tsx` + web `dashboard/page.tsx` both show LCD metrics + overdue contacts |
+| 11 — In-app debug logs | ✅ Mobile: `logs.tsx` ring buffer. Web: `console.log/warn/error` (browser DevTools) |
+| 12 — Web/mobile feature parity | ✅ Done — contacts use contact_tier, braindump has categories, tasks have tags + edit + date presets |
+
+**Pending DB migration**: Run `supabase/migrations_v3.sql` in Supabase SQL Editor to add `braindump_jobs.categories` column.

@@ -52,7 +52,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (magA * magB)
 }
 
-async function processJob(job: { id: string; user_id: string; raw_transcript: string }) {
+async function processJob(job: { id: string; user_id: string; raw_transcript: string }): Promise<{
+  created: string[]; merged: string[]; duplicates: string[]
+}> {
+  console.log('[process-braindump] job:', job.id, 'transcript:', job.raw_transcript.slice(0, 100))
+  const outcome = { created: [] as string[], merged: [] as string[], duplicates: [] as string[] }
+
+  try {
   await supabase
     .from('braindump_jobs')
     .update({ processing_status: 'processing' })
@@ -69,6 +75,7 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
     .eq('status', 'pending')
 
   const existingList = existingTasks ?? []
+  console.log('[process-braindump] existing tasks:', existingList.length)
 
   // Extract tasks via GPT-4o
   const completion = await openai.chat.completions.create({
@@ -77,10 +84,16 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
       {
         role: 'system',
         content: `Extract actionable tasks from the user's braindump transcript.
-Compare against existing tasks.
+
+Rules:
+- If the user lists programs, companies, resources, or things to look into — generate a "Research [X]" or "Look into [X]" task for EACH item. Never skip items in a list.
+- If the user writes explicit todos ("call X", "email Y") — extract those directly.
+- If the user dumps reference info (links, names, notes) — turn each into a concrete follow-up task.
+- Be generous: when in doubt, create the task.
+
 Existing tasks today: ${JSON.stringify(existingList.map(t => ({ id: t.id, title: t.title })))}.
-Use cosine similarity thresholds: >0.85 merge, 0.65-0.85 flag as possible_duplicate, <0.65 create new.
-Be conservative with merges — only merge if near-identical.`,
+Cosine similarity thresholds: >0.85 merge, 0.65–0.85 flag as possible_duplicate, <0.65 create new.
+Merge only if near-identical.`,
       },
       { role: 'user', content: job.raw_transcript },
     ],
@@ -94,6 +107,7 @@ Be conservative with merges — only merge if near-identical.`,
   const { tasks } = JSON.parse(toolCall.function.arguments) as {
     tasks: Array<{ action: string; title: string; existing_id?: string }>
   }
+  console.log('[process-braindump] extracted tasks:', JSON.stringify(tasks))
 
   // Embed extracted tasks and run cosine dedup
   for (const task of tasks) {
@@ -102,6 +116,7 @@ Be conservative with merges — only merge if near-identical.`,
       const existingEmbs = await Promise.all(existingList.map(t => embedText(t.title)))
       const sims = existingList.map((t, i) => ({ ...t, sim: cosineSimilarity(taskEmb, existingEmbs[i]) }))
       const best = sims.reduce((a, b) => (a.sim > b.sim ? a : b))
+      console.log('[process-braindump] dedup:', task.title, '→ best match:', best.title, 'sim:', best.sim.toFixed(3))
 
       if (best.sim > 0.85) {
         task.action = 'merge'
@@ -113,28 +128,63 @@ Be conservative with merges — only merge if near-identical.`,
     }
 
     if (task.action === 'create') {
-      await supabase.from('tasks').insert({
+      console.log('[process-braindump] inserting task:', task.title)
+      const { error: insertErr } = await supabase.from('tasks').insert({
         user_id: job.user_id,
         title: task.title,
         due_date: today,
         raw_source: job.raw_transcript.slice(0, 200),
       })
+      if (insertErr) console.error('[process-braindump] insert error:', insertErr.message)
+      else outcome.created.push(task.title)
     } else if (task.action === 'merge' && task.existing_id) {
-      await supabase
-        .from('tasks')
-        .update({ ai_merged_from: task.existing_id })
-        .eq('id', task.existing_id)
+      console.log('[process-braindump] merged into existing:', task.existing_id)
+      outcome.merged.push(task.title)
+    } else if (task.action === 'possible_duplicate') {
+      console.log('[process-braindump] possible_duplicate — creating anyway:', task.title)
+      const { error: insertErr } = await supabase.from('tasks').insert({
+        user_id: job.user_id,
+        title: task.title,
+        due_date: today,
+        raw_source: job.raw_transcript.slice(0, 200),
+      })
+      if (insertErr) {
+        console.error('[process-braindump] insert error:', insertErr.message)
+        outcome.duplicates.push(task.title)
+      } else {
+        outcome.created.push(task.title)
+      }
     }
-    // possible_duplicate: leave for user to resolve (future Layer 2 nudge)
   }
 
   await supabase
     .from('braindump_jobs')
     .update({ processing_status: 'done' })
     .eq('id', job.id)
+
+  console.log('[process-braindump] done. created:', outcome.created.length, 'merged:', outcome.merged.length)
+  } catch (e: any) {
+    const msg = e?.message ?? String(e)
+    console.error('[process-braindump] job failed:', job.id, msg)
+    await supabase
+      .from('braindump_jobs')
+      .update({ processing_status: 'failed', last_error: msg })
+      .eq('id', job.id)
+    throw e
+  }
+
+  return outcome
 }
 
-Deno.serve(async () => {
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: cors })
+
   const { data: jobs } = await supabase
     .from('braindump_jobs')
     .select('id, user_id, raw_transcript')
@@ -142,27 +192,25 @@ Deno.serve(async () => {
     .lt('retry_count', 3)
     .limit(10)
 
-  if (!jobs?.length) return new Response('no jobs', { status: 200 })
+  if (!jobs?.length) return new Response(JSON.stringify({ processed: 0 }), {
+    status: 200, headers: { ...cors, 'Content-Type': 'application/json' },
+  })
 
   const results = await Promise.allSettled(jobs.map(processJob))
 
+  const created: string[] = []
+  const merged: string[] = []
   for (let i = 0; i < jobs.length; i++) {
     if (results[i].status === 'rejected') {
-      await supabase
-        .from('braindump_jobs')
-        .update({
-          processing_status: 'failed',
-          last_error: String((results[i] as PromiseRejectedResult).reason),
-          retry_count: supabase.rpc('increment', { row_id: jobs[i].id }),
-        })
-        .eq('id', jobs[i].id)
-
-      // Increment retry_count separately
       await supabase.rpc('increment_retry', { job_id: jobs[i].id })
+    } else if (results[i].status === 'fulfilled') {
+      const v = (results[i] as PromiseFulfilledResult<any>).value
+      created.push(...(v?.created ?? []))
+      merged.push(...(v?.merged ?? []))
     }
   }
 
-  return new Response(JSON.stringify({ processed: jobs.length }), {
-    headers: { 'Content-Type': 'application/json' },
+  return new Response(JSON.stringify({ processed: jobs.length, created, merged }), {
+    headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })

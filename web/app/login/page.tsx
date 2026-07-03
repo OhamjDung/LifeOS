@@ -34,10 +34,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950">
-      <div className="w-full max-w-sm p-8 bg-gray-900 rounded-2xl border border-gray-800">
-        <h1 className="text-2xl font-bold text-white mb-2">LifeOS</h1>
-        <p className="text-gray-400 text-sm mb-8">Your personal second brain.</p>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#CCCAC0' }}>
+      <div className="w-full max-w-sm p-8 rounded-2xl" style={{
+        background: '#DEDAD2',
+        border: '1px solid rgba(255,255,255,0.6)',
+        boxShadow: '6px 6px 16px rgba(107,99,88,0.35), -4px -4px 12px rgba(255,255,255,0.7)',
+      }}>
+        <h1 className="text-2xl font-bold mb-1" style={{ color: '#1C1A14', fontFamily: 'IBM Plex Mono, monospace' }}>LifeOS</h1>
+        <p className="text-sm mb-8" style={{ color: '#837C6F', fontFamily: 'IBM Plex Mono, monospace' }}>Your personal second brain.</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
@@ -46,7 +50,13 @@ export default function LoginPage() {
             value={email}
             onChange={e => setEmail(e.target.value)}
             required
-            className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+            className="w-full px-4 py-2.5 rounded-lg text-sm outline-none"
+            style={{
+              background: '#C4C1B7',
+              border: '1px solid #B5B2A8',
+              color: '#1C1A14',
+              fontFamily: 'IBM Plex Mono, monospace',
+            }}
           />
           <input
             type="password"
@@ -54,16 +64,27 @@ export default function LoginPage() {
             value={password}
             onChange={e => setPassword(e.target.value)}
             required
-            className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+            className="w-full px-4 py-2.5 rounded-lg text-sm outline-none"
+            style={{
+              background: '#C4C1B7',
+              border: '1px solid #B5B2A8',
+              color: '#1C1A14',
+              fontFamily: 'IBM Plex Mono, monospace',
+            }}
           />
 
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-          {message && <p className="text-green-400 text-sm">{message}</p>}
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+          {message && <p className="text-green-700 text-sm">{message}</p>}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg text-white font-medium transition-colors"
+            className="w-full py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
+            style={{
+              background: '#516439',
+              color: '#DEDAD2',
+              fontFamily: 'IBM Plex Mono, monospace',
+            }}
           >
             {loading ? 'Loading...' : isSignUp ? 'Create account' : 'Sign in'}
           </button>
@@ -71,7 +92,8 @@ export default function LoginPage() {
 
         <button
           onClick={() => setIsSignUp(!isSignUp)}
-          className="mt-4 w-full text-center text-sm text-gray-500 hover:text-gray-300"
+          className="mt-4 w-full text-center text-sm transition-colors"
+          style={{ color: '#837C6F', fontFamily: 'IBM Plex Mono, monospace' }}
         >
           {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
         </button>

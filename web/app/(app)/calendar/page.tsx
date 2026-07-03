@@ -5,17 +5,19 @@ import Link from 'next/link'
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ m?: string; y?: string }>
+  searchParams: Promise<{ m?: string; y?: string; d?: string }>
 }) {
-  const { m, y } = await searchParams
+  const { m, y, d } = await searchParams
   const now = new Date()
   const year = y ? parseInt(y) : now.getFullYear()
-  const month = m ? parseInt(m) - 1 : now.getMonth() // 0-indexed
+  const month = m ? parseInt(m) - 1 : now.getMonth()
 
   const firstDay = new Date(year, month, 1)
   const lastDay = new Date(year, month + 1, 0)
   const firstStr = firstDay.toISOString().split('T')[0]
   const lastStr = lastDay.toISOString().split('T')[0]
+  const todayStr = now.toISOString().split('T')[0]
+  const selectedDate = d ?? null
 
   const supabase = await createClient()
   const { data } = await supabase
@@ -28,15 +30,13 @@ export default async function CalendarPage({
 
   const tasks = (data as Task[]) ?? []
 
-  // Group tasks by due_date
   const byDate: Record<string, Task[]> = {}
   for (const task of tasks) {
     if (!byDate[task.due_date]) byDate[task.due_date] = []
     byDate[task.due_date].push(task)
   }
 
-  // Build calendar grid
-  const startDow = firstDay.getDay() // 0=Sun
+  const startDow = firstDay.getDay()
   const daysInMonth = lastDay.getDate()
   const cells: (number | null)[] = [
     ...Array(startDow).fill(null),
@@ -46,11 +46,20 @@ export default async function CalendarPage({
 
   const prevMonth = new Date(year, month - 1, 1)
   const nextMonth = new Date(year, month + 1, 1)
-  const todayStr = now.toISOString().split('T')[0]
-
   const monthLabel = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   const weeks = []
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
+
+  const selectedTasks = selectedDate ? (byDate[selectedDate] ?? []) : []
+  const selectedLabel = selectedDate
+    ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    : null
+
+  function dayHref(day: number) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const base = `?m=${month + 1}&y=${year}&d=${dateStr}`
+    return selectedDate === dateStr ? `?m=${month + 1}&y=${year}` : base
+  }
 
   return (
     <div className="p-8 max-w-4xl">
@@ -99,24 +108,25 @@ export default async function CalendarPage({
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
               const dayTasks = byDate[dateStr] ?? []
               const isToday = dateStr === todayStr
+              const isSelected = dateStr === selectedDate
               const events = dayTasks.filter(t => t.task_type === 'event')
               const regularTasks = dayTasks.filter(t => t.task_type === 'task')
 
               return (
-                <div
+                <Link
                   key={di}
-                  className={`min-h-24 p-2 ${di < 6 ? 'border-r border-gray-800' : ''} ${
-                    isToday ? 'bg-indigo-950/30' : 'bg-gray-900'
+                  href={dayHref(day)}
+                  className={`min-h-24 p-2 block ${di < 6 ? 'border-r border-gray-800' : ''} transition-colors ${
+                    isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-950/30' : 'bg-gray-900 hover:bg-gray-800/50'
                   }`}
                 >
                   <div className={`text-xs font-medium mb-1.5 w-6 h-6 flex items-center justify-center rounded-full ${
-                    isToday ? 'bg-indigo-600 text-white' : 'text-gray-400'
+                    isSelected ? 'bg-indigo-500 text-[#DEDAD2]' : isToday ? 'bg-indigo-600 text-[#DEDAD2]' : 'text-gray-400'
                   }`}>
                     {day}
                   </div>
 
-                  {/* Event tasks — show title */}
-                  {events.map(t => (
+                  {events.slice(0, 2).map(t => (
                     <div
                       key={t.id}
                       className={`text-xs px-1.5 py-0.5 rounded mb-1 truncate ${
@@ -130,26 +140,45 @@ export default async function CalendarPage({
                     </div>
                   ))}
 
-                  {/* Regular tasks — show dots */}
                   {regularTasks.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {regularTasks.map(t => (
+                      {regularTasks.slice(0, 5).map(t => (
                         <div
                           key={t.id}
                           title={t.title}
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            t.status === 'done' ? 'bg-gray-600' : 'bg-indigo-500'
-                          }`}
+                          className={`w-1.5 h-1.5 rounded-full ${t.status === 'done' ? 'bg-gray-600' : 'bg-indigo-500'}`}
                         />
                       ))}
                     </div>
                   )}
-                </div>
+                </Link>
               )
             })}
           </div>
         ))}
       </div>
+
+      {/* Selected day detail */}
+      {selectedDate && (
+        <div className="mt-6 bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <h3 className="font-medium text-white mb-4">{selectedLabel}</h3>
+          {selectedTasks.length === 0 ? (
+            <p className="text-gray-500 text-sm">Nothing scheduled.</p>
+          ) : (
+            <div className="space-y-2">
+              {selectedTasks.map(t => (
+                <div key={t.id} className="flex items-center gap-3">
+                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.status === 'done' ? 'bg-gray-600' : t.task_type === 'event' ? 'bg-indigo-400' : 'bg-indigo-500'}`} />
+                  <span className={`text-sm ${t.status === 'done' ? 'line-through text-gray-500' : 'text-gray-200'}`}>
+                    {t.task_type === 'event' && <span className="text-indigo-400 mr-1">📅</span>}
+                    {t.title}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
         <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" /> Task</span>

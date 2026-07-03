@@ -76,6 +76,8 @@ Last updated: 2026-06-07 (nav refactor)
 - Text content (multiline)
 - **🎙 mic button** (dev client only, hidden in Expo Go) — tap to record speech, appends to content
 - Save → AI categorizes and embeds in background (~2 min)
+  - Categorization uses two context sources: notes written within ±2 hours (session clustering) + top-5 semantically similar notes from history (consistent tagging across sessions)
+  - Prefers tags already in your tag library; creates new tags only if nothing fits
 
 ### Upload recording (🎙 Upload button, top right)
 - Tap → file picker for audio files
