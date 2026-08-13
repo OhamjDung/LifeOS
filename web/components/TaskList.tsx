@@ -4,6 +4,76 @@ import { useState, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType } from '@/lib/types'
 
+type GroupColor = 'indigo' | 'orange' | 'green' | 'yellow' | 'rose' | 'cyan' | 'purple'
+
+interface TaskGroup {
+  name: string
+  color: GroupColor
+  task_ids: string[]
+}
+
+const GROUP_COLORS: Record<
+  GroupColor,
+  { bg: string; border: string; dot: string; text: string; bar: string; barBg: string }
+> = {
+  indigo: {
+    bg: 'bg-indigo-950/30',
+    border: 'border-indigo-700/30',
+    dot: 'bg-indigo-400',
+    text: 'text-indigo-300',
+    bar: 'bg-indigo-500',
+    barBg: 'bg-indigo-900/30',
+  },
+  orange: {
+    bg: 'bg-orange-950/20',
+    border: 'border-orange-700/30',
+    dot: 'bg-orange-400',
+    text: 'text-orange-300',
+    bar: 'bg-orange-500',
+    barBg: 'bg-orange-900/20',
+  },
+  green: {
+    bg: 'bg-green-950/20',
+    border: 'border-green-700/30',
+    dot: 'bg-green-400',
+    text: 'text-green-300',
+    bar: 'bg-green-500',
+    barBg: 'bg-green-900/20',
+  },
+  yellow: {
+    bg: 'bg-yellow-950/20',
+    border: 'border-yellow-700/30',
+    dot: 'bg-yellow-400',
+    text: 'text-yellow-300',
+    bar: 'bg-yellow-500',
+    barBg: 'bg-yellow-900/20',
+  },
+  rose: {
+    bg: 'bg-rose-950/20',
+    border: 'border-rose-700/30',
+    dot: 'bg-rose-400',
+    text: 'text-rose-300',
+    bar: 'bg-rose-500',
+    barBg: 'bg-rose-900/20',
+  },
+  cyan: {
+    bg: 'bg-cyan-950/20',
+    border: 'border-cyan-700/30',
+    dot: 'bg-cyan-400',
+    text: 'text-cyan-300',
+    bar: 'bg-cyan-500',
+    barBg: 'bg-cyan-900/20',
+  },
+  purple: {
+    bg: 'bg-purple-950/20',
+    border: 'border-purple-700/30',
+    dot: 'bg-purple-400',
+    text: 'text-purple-300',
+    bar: 'bg-purple-500',
+    barBg: 'bg-purple-900/20',
+  },
+}
+
 interface Props {
   initialTasks: Task[]
   contacts: Pick<Contact, 'id' | 'name'>[]
@@ -28,6 +98,12 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [dragSection, setDragSection] = useState<'followUp' | 'pending' | null>(null)
+  // Group view state
+  const [grouping, setGrouping] = useState(false)
+  const [groupView, setGroupView] = useState(false)
+  const [groups, setGroups] = useState<TaskGroup[]>([])
+  const [ungroupedIds, setUngroupedIds] = useState<string[]>([])
+  const [groupError, setGroupError] = useState<string | null>(null)
   const supabase = createClient()
 
   const followUp = tasks.filter(t => t.status === 'pending' && !!t.contact_id)
@@ -38,7 +114,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     e.preventDefault()
     if (!newTitle.trim()) return
 
-    const { data: { user } } = await supabase.auth.getUser()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     const { data, error } = await supabase
       .from('tasks')
       .insert({
@@ -68,7 +146,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       .eq('id', task.id)
 
     if (!error) {
-      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: newStatus } : t))
+      setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status: newStatus } : t)))
     }
   }
 
@@ -105,7 +183,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       .eq('id', task.id)
 
     if (!error) {
-      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, title: editTitle.trim() } : t))
+      setTasks(prev =>
+        prev.map(t => (t.id === task.id ? { ...t, title: editTitle.trim() } : t)),
+      )
     }
     setEditingId(null)
   }
@@ -128,7 +208,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
 
   function handleDrop(idx: number, section: 'followUp' | 'pending') {
     if (dragIdx === null || dragSection !== section || dragIdx === idx) {
-      setDragIdx(null); setDragOverIdx(null); setDragSection(null)
+      setDragIdx(null)
+      setDragOverIdx(null)
+      setDragSection(null)
       return
     }
     const src = section === 'followUp' ? followUp : pending
@@ -140,17 +222,108 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
         ? [...reordered, ...pending, ...done]
         : [...followUp, ...reordered, ...done],
     )
-    setDragIdx(null); setDragOverIdx(null); setDragSection(null)
+    setDragIdx(null)
+    setDragOverIdx(null)
+    setDragSection(null)
   }
 
   function handleDragEnd() {
-    setDragIdx(null); setDragOverIdx(null); setDragSection(null)
+    setDragIdx(null)
+    setDragOverIdx(null)
+    setDragSection(null)
   }
 
+  async function handleGroupTasks() {
+    const activeTasks = [...followUp, ...pending]
+    if (activeTasks.length < 2) return
+    setGrouping(true)
+    setGroupError(null)
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-group-tasks`
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          tasks: activeTasks.map(t => ({ id: t.id, title: t.title })),
+        }),
+      })
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => resp.statusText)
+        throw new Error(`${resp.status}: ${errText.slice(0, 120)}`)
+      }
+      const data = await resp.json()
+      const parsedGroups = (data.groups as TaskGroup[]) ?? []
+      if (parsedGroups.length === 0) {
+        setGroupError('AI returned no groups — tasks may be too similar or too few.')
+        return
+      }
+      setGroups(parsedGroups)
+      setUngroupedIds((data.ungrouped_ids as string[]) ?? [])
+      setGroupView(true)
+    } catch (e: any) {
+      setGroupError(e.message ?? 'Grouping failed.')
+    } finally {
+      setGrouping(false)
+    }
+  }
+
+  function makeRowProps(task: Task) {
+    return {
+      task,
+      editingId,
+      editTitle,
+      onToggle: () => markDone(task),
+      onRollover: () => rollover(task),
+      onDelete: () => deleteTask(task.id),
+      onEditStart: () => {
+        setEditingId(task.id)
+        setEditTitle(task.title)
+      },
+      onEditChange: setEditTitle,
+      onEditSave: () => saveEdit(task),
+      onEditCancel: () => setEditingId(null),
+      disabled: isPending,
+    }
+  }
+
+  const activePendingCount = followUp.length + pending.length
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Group button toolbar */}
+      <div className="flex justify-start">
+        <button
+          onClick={groupView ? () => { setGroupView(false); setGroupError(null) } : handleGroupTasks}
+          disabled={grouping || (!groupView && activePendingCount < 2)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          {grouping ? (
+            <>
+              <span className="inline-block animate-spin">◌</span>
+              Grouping...
+            </>
+          ) : groupView ? (
+            <>≡ List View</>
+          ) : (
+            <>⊞ Group Similar</>
+          )}
+        </button>
+        {groupError && (
+          <span className="ml-3 text-xs text-red-400">{groupError}</span>
+        )}
+      </div>
+
       {/* Add task form */}
-      <form onSubmit={addTask} className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+      <form
+        onSubmit={addTask}
+        className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3"
+      >
         <div className="flex gap-2">
           <input
             type="text"
@@ -229,7 +402,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
             >
               <option value="">No contact</option>
               {contacts.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           )}
@@ -239,7 +414,33 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       {/* Task list */}
       {followUp.length === 0 && pending.length === 0 && done.length === 0 ? (
         <p className="text-gray-500 text-sm text-center py-8">No tasks today. Add one above.</p>
+      ) : groupView ? (
+        /* Group view */
+        <div className="space-y-4">
+          {groups.map(group => (
+            <GroupCard
+              key={group.name}
+              group={group}
+              tasks={tasks}
+              makeRowProps={makeRowProps}
+            />
+          ))}
+          {/* Ungrouped tasks */}
+          {ungroupedIds.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">Other</p>
+              <div className="space-y-2">
+                {tasks
+                  .filter(t => ungroupedIds.includes(t.id) && t.status !== 'done')
+                  .map(task => (
+                    <TaskRow key={task.id} {...makeRowProps(task)} />
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
+        /* Flat list view */
         <>
           {followUp.length > 0 && (
             <div className="space-y-2 mb-4">
@@ -258,19 +459,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
                       : ''
                   } ${dragIdx === idx && dragSection === 'followUp' ? 'opacity-40' : ''}`}
                 >
-                  <TaskRow
-                    task={task}
-                    editingId={editingId}
-                    editTitle={editTitle}
-                    onToggle={() => markDone(task)}
-                    onRollover={() => rollover(task)}
-                    onDelete={() => deleteTask(task.id)}
-                    onEditStart={() => { setEditingId(task.id); setEditTitle(task.title) }}
-                    onEditChange={setEditTitle}
-                    onEditSave={() => saveEdit(task)}
-                    onEditCancel={() => setEditingId(null)}
-                    disabled={isPending}
-                  />
+                  <TaskRow {...makeRowProps(task)} />
                 </div>
               ))}
             </div>
@@ -292,19 +481,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
                       : ''
                   } ${dragIdx === idx && dragSection === 'pending' ? 'opacity-40' : ''}`}
                 >
-                  <TaskRow
-                    task={task}
-                    editingId={editingId}
-                    editTitle={editTitle}
-                    onToggle={() => markDone(task)}
-                    onRollover={() => rollover(task)}
-                    onDelete={() => deleteTask(task.id)}
-                    onEditStart={() => { setEditingId(task.id); setEditTitle(task.title) }}
-                    onEditChange={setEditTitle}
-                    onEditSave={() => saveEdit(task)}
-                    onEditCancel={() => setEditingId(null)}
-                    disabled={isPending}
-                  />
+                  <TaskRow {...makeRowProps(task)} />
                 </div>
               ))}
             </div>
@@ -315,20 +492,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               <p className="text-xs text-gray-600 mb-2 uppercase tracking-wider">Completed</p>
               <div className="space-y-1 opacity-50">
                 {done.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    editingId={editingId}
-                    editTitle={editTitle}
-                    onToggle={() => markDone(task)}
-                    onRollover={() => rollover(task)}
-                    onDelete={() => deleteTask(task.id)}
-                    onEditStart={() => { setEditingId(task.id); setEditTitle(task.title) }}
-                    onEditChange={setEditTitle}
-                    onEditSave={() => saveEdit(task)}
-                    onEditCancel={() => setEditingId(null)}
-                    disabled={isPending}
-                  />
+                  <TaskRow key={task.id} {...makeRowProps(task)} />
                 ))}
               </div>
             </div>
@@ -339,9 +503,59 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   )
 }
 
+function GroupCard({
+  group,
+  tasks,
+  makeRowProps,
+}: {
+  group: TaskGroup
+  tasks: Task[]
+  makeRowProps: (task: Task) => React.ComponentProps<typeof TaskRow>
+}) {
+  const colors = GROUP_COLORS[group.color] ?? GROUP_COLORS.indigo
+  const groupTasks = tasks.filter(t => group.task_ids.includes(t.id))
+  const doneTasks = groupTasks.filter(t => t.status === 'done')
+  const pct =
+    groupTasks.length > 0 ? Math.round((doneTasks.length / groupTasks.length) * 100) : 0
+
+  return (
+    <div className={`rounded-xl border p-4 ${colors.bg} ${colors.border}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <div className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
+        <span className={`text-sm font-semibold ${colors.text}`}>{group.name}</span>
+        <span className="text-xs text-gray-500 ml-auto">
+          {doneTasks.length}/{groupTasks.length} done
+        </span>
+      </div>
+      {/* Progress bar */}
+      <div className={`h-1.5 rounded-full mb-3 ${colors.barBg}`}>
+        <div
+          className={`h-1.5 rounded-full ${colors.bar} transition-all duration-300`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {/* Tasks */}
+      <div className="space-y-1.5">
+        {groupTasks.map(task => (
+          <TaskRow key={task.id} {...makeRowProps(task)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function TaskRow({
-  task, editingId, editTitle, onToggle, onRollover, onDelete,
-  onEditStart, onEditChange, onEditSave, onEditCancel, disabled,
+  task,
+  editingId,
+  editTitle,
+  onToggle,
+  onRollover,
+  onDelete,
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  disabled,
 }: {
   task: Task
   editingId: string | null
@@ -360,11 +574,17 @@ function TaskRow({
   const isContact = !!task.contact_id
   const rolls = task.rollover_count ?? 0
   const isEditing = editingId === task.id
+  const dueStr = new Date(task.due_date + 'T12:00:00').toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })
 
   return (
-    <div className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 transition-colors ${
-      isEvent ? 'border-indigo-900/60' : 'border-gray-800'
-    } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''}`}>
+    <div
+      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 transition-colors ${
+        isEvent ? 'border-indigo-900/60' : 'border-gray-800'
+      } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''}`}
+    >
       <button
         onClick={onToggle}
         disabled={disabled}
@@ -383,7 +603,10 @@ function TaskRow({
             autoFocus
             value={editTitle}
             onChange={e => onEditChange(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') onEditSave(); if (e.key === 'Escape') onEditCancel() }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') onEditSave()
+              if (e.key === 'Escape') onEditCancel()
+            }}
             onBlur={onEditSave}
             className="w-full bg-gray-800 border border-indigo-500 rounded px-2 py-0.5 text-sm text-white outline-none"
           />
@@ -410,9 +633,7 @@ function TaskRow({
                   {task.tags[0].name}
                 </span>
               ) : null}
-              {task.due_date !== new Date().toISOString().split('T')[0] && (
-                <span className="text-xs text-gray-600">{task.due_date}</span>
-              )}
+              <span className="text-xs text-gray-600">{dueStr}</span>
             </div>
           </>
         )}

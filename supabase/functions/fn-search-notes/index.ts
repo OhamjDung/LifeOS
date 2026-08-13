@@ -1,15 +1,22 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import OpenAI from 'npm:openai'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 )
 
-const openai = new OpenAI({
-  baseURL: 'https://models.inference.ai.azure.com',
-  apiKey: Deno.env.get('GITHUB_TOKEN')!,
-})
+async function jinaEmbed(text: string): Promise<number[]> {
+  const res = await fetch('https://api.jina.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${Deno.env.get('JINA_API_KEY')}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ model: 'jina-embeddings-v3', input: [text], task: 'retrieval.query', dimensions: 1024 }),
+  })
+  const json = await res.json()
+  return json.data[0].embedding
+}
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
@@ -17,7 +24,6 @@ Deno.serve(async (req) => {
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return new Response('Unauthorized', { status: 401 })
 
-  // Verify user via JWT
   const userClient = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -29,11 +35,7 @@ Deno.serve(async (req) => {
   const { query, limit = 10 } = await req.json() as { query: string; limit?: number }
   if (!query?.trim()) return new Response('Missing query', { status: 400 })
 
-  const embRes = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: query.trim(),
-  })
-  const embedding = embRes.data[0].embedding
+  const embedding = await jinaEmbed(query.trim())
 
   const { data: results, error } = await supabase.rpc('search_notes', {
     query_embedding: JSON.stringify(embedding),

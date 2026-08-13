@@ -2,8 +2,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import OpenAI from 'npm:openai'
 
 const openai = new OpenAI({
-  baseURL: 'https://models.inference.ai.azure.com',
-  apiKey: Deno.env.get('GITHUB_TOKEN'),
+  baseURL: 'https://api.deepseek.com',
+  apiKey: Deno.env.get('DEEPSEEK_TOKEN'),
 })
 
 Deno.serve(async (req) => {
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   }
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'deepseek-v4-flash',
     messages: [
       {
         role: 'system',

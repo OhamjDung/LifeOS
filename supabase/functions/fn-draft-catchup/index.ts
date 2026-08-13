@@ -7,8 +7,8 @@ const supabase = createClient(
 )
 
 const openai = new OpenAI({
-  baseURL: 'https://models.inference.ai.azure.com',
-  apiKey: Deno.env.get('GITHUB_TOKEN')!,
+  baseURL: 'https://api.deepseek.com',
+  apiKey: Deno.env.get('DEEPSEEK_TOKEN')!,
 })
 
 const TIER_TONE: Record<string, string> = {
@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
   const recentContext = events?.map(e => `${e.event_type}: ${e.body ?? ''}`).join('; ') ?? 'none'
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'deepseek-v4-flash',
     messages: [
       {
         role: 'system',

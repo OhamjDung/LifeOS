@@ -7,13 +7,26 @@ const supabase = createClient(
 )
 
 const openai = new OpenAI({
-  baseURL: 'https://models.inference.ai.azure.com',
-  apiKey: Deno.env.get('GITHUB_TOKEN')!,
+  baseURL: 'https://api.deepseek.com',
+  apiKey: Deno.env.get('DEEPSEEK_TOKEN')!,
 })
 
+async function jinaEmbed(inputs: string[], task: 'retrieval.passage' | 'retrieval.query' = 'retrieval.passage'): Promise<number[][]> {
+  const res = await fetch('https://api.jina.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${Deno.env.get('JINA_API_KEY')}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ model: 'jina-embeddings-v3', input: inputs, task, dimensions: 1024 }),
+  })
+  const json = await res.json()
+  return json.data.map((d: { embedding: number[] }) => d.embedding)
+}
+
 function chunkText(text: string): string[] {
-  const MAX_CHARS = 1200 // ~300 tokens
-  const OVERLAP_CHARS = 200 // ~50 tokens
+  const MAX_CHARS = 1200
+  const OVERLAP_CHARS = 200
 
   const paragraphs = text.split(/\n\n+/).filter(p => p.trim())
 
@@ -27,7 +40,6 @@ function chunkText(text: string): string[] {
       current = current ? current + '\n\n' + para : para
     } else {
       if (current) chunks.push(current)
-      // If paragraph itself is too long, split by sentence
       if (para.length > MAX_CHARS) {
         const sentences = para.match(/[^.!?]+[.!?]+/g) ?? [para]
         let sub = ''
@@ -47,7 +59,6 @@ function chunkText(text: string): string[] {
   }
   if (current) chunks.push(current)
 
-  // Add overlap between chunks
   return chunks.map((chunk, i) => {
     if (i === 0) return chunk
     const prev = chunks[i - 1]
@@ -65,7 +76,6 @@ async function processNote(note: { id: string; content: string; title: string | 
 
   const chunks = chunkText(note.content)
 
-  // Fetch nearby notes (±2 hours) and existing tags in parallel for context
   const windowStart = new Date(new Date(note.created_at).getTime() - 2 * 60 * 60 * 1000).toISOString()
   const windowEnd = new Date(new Date(note.created_at).getTime() + 2 * 60 * 60 * 1000).toISOString()
 
@@ -84,15 +94,9 @@ async function processNote(note: { id: string; content: string; title: string | 
       .select('name')
       .eq('user_id', note.user_id)
       .order('name'),
-    Promise.all(
-      chunks.map(chunk =>
-        openai.embeddings.create({ model: 'text-embedding-3-small', input: chunk })
-          .then(r => r.data[0].embedding)
-      )
-    ),
+    jinaEmbed(chunks),
   ])
 
-  // Semantic search: find top-5 similar notes using first chunk embedding
   const { data: similarRaw } = await supabase.rpc('search_notes', {
     query_embedding: JSON.stringify(embeddings[0]),
     match_count: 8,
@@ -103,10 +107,8 @@ async function processNote(note: { id: string; content: string; title: string | 
     .filter(r => r.note_id !== note.id)
     .slice(0, 5)
 
-  // Delete old chunks (handles re-edits)
   await supabase.from('note_chunks').delete().eq('note_id', note.id)
 
-  // Insert new chunks
   await supabase.from('note_chunks').insert(
     chunks.map((chunk, i) => ({
       note_id: note.id,
@@ -138,9 +140,8 @@ async function processNote(note: { id: string; content: string; title: string | 
 Category: one of [Work, Personal, Learning, Health, Finance, Ideas, Reference, Other].
 Tags: 2-4 lowercase keywords. STRONGLY prefer tags from the existing tags list. Only add a new tag if none of the existing ones fit.${tagsBlock}`
 
-  // Categorize with GPT-4o-mini
   const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'deepseek-v4-flash',
     messages: [
       { role: 'system', content: systemPrompt },
       {
@@ -152,7 +153,7 @@ Tags: 2-4 lowercase keywords. STRONGLY prefer tags from the existing tags list. 
   })
 
   const { category, tags } = JSON.parse(completion.choices[0].message.content ?? '{}')
-  console.log('[embed-note] note:', note.id, '→ category:', category, 'tags:', tags, 'nearby:', nearbyNotes.length, 'similar:', similarNotes.length)
+  console.log('[embed-note] note:', note.id, '→ category:', category, 'tags:', tags)
 
   await supabase
     .from('notes')
