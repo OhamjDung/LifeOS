@@ -1,5 +1,6 @@
 
 .specs/scratchpad/
+.claude/settings.local.json
 mobile/.env
 mobile/node_modules/
 mobile/ios/
