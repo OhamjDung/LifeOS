@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { Task, Contact } from '@/lib/types'
 import { TaskList } from '@/components/TaskList'
+import { TaskDetailPane } from '@/components/TaskDetailPane'
+import { TaskSelectionProvider } from '@/lib/taskSelection'
 import Link from 'next/link'
 
 export default async function TasksPage({
@@ -91,6 +93,7 @@ export default async function TasksPage({
   }
 
   return (
+    <TaskSelectionProvider>
     <div className="flex h-screen">
       {/* Left: Task list */}
       <div
@@ -110,8 +113,9 @@ export default async function TasksPage({
         />
       </div>
 
-      {/* Right: Calendar */}
+      {/* Right: Calendar / Task detail */}
       <div className="w-1/2 p-6 overflow-y-auto min-w-0">
+      <TaskDetailPane>
         <div className="flex items-center justify-between mb-5">
           <div>
             <h2 className="text-xl font-bold text-white">Calendar</h2>
@@ -295,7 +299,9 @@ export default async function TasksPage({
             <span className="w-1.5 h-1.5 rounded-full bg-gray-600 inline-block" /> Done
           </span>
         </div>
+      </TaskDetailPane>
       </div>
     </div>
+    </TaskSelectionProvider>
   )
 }

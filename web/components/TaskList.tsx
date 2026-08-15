@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType } from '@/lib/types'
+import { useTaskSelection } from '@/lib/taskSelection'
 
 type GroupColor = 'indigo' | 'orange' | 'green' | 'yellow' | 'rose' | 'cyan' | 'purple'
 
@@ -105,6 +106,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   const [ungroupedIds, setUngroupedIds] = useState<string[]>([])
   const [groupError, setGroupError] = useState<string | null>(null)
   const supabase = createClient()
+  const { select } = useTaskSelection()
 
   const followUp = tasks.filter(t => t.status === 'pending' && !!t.contact_id)
   const pending = tasks.filter(t => t.status === 'pending' && !t.contact_id)
@@ -288,6 +290,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       onEditChange: setEditTitle,
       onEditSave: () => saveEdit(task),
       onEditCancel: () => setEditingId(null),
+      onSelect: () => select(task),
       disabled: isPending,
     }
   }
@@ -555,6 +558,7 @@ function TaskRow({
   onEditChange,
   onEditSave,
   onEditCancel,
+  onSelect,
   disabled,
 }: {
   task: Task
@@ -567,6 +571,7 @@ function TaskRow({
   onEditChange: (v: string) => void
   onEditSave: () => void
   onEditCancel: () => void
+  onSelect: () => void
   disabled: boolean
 }) {
   const isDone = task.status === 'done'
@@ -581,12 +586,16 @@ function TaskRow({
 
   return (
     <div
-      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 transition-colors ${
+      onClick={onSelect}
+      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 cursor-pointer transition-colors ${
         isEvent ? 'border-indigo-900/60' : 'border-gray-800'
       } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''}`}
     >
       <button
-        onClick={onToggle}
+        onClick={e => {
+          e.stopPropagation()
+          onToggle()
+        }}
         disabled={disabled}
         className={`w-5 h-5 shrink-0 transition-colors flex items-center justify-center ${
           isEvent
@@ -602,6 +611,7 @@ function TaskRow({
           <input
             autoFocus
             value={editTitle}
+            onClick={e => e.stopPropagation()}
             onChange={e => onEditChange(e.target.value)}
             onKeyDown={e => {
               if (e.key === 'Enter') onEditSave()
@@ -616,7 +626,10 @@ function TaskRow({
               {isEvent && <span className="text-xs text-indigo-400 shrink-0">📅</span>}
               <span
                 className={`text-sm truncate ${isDone ? 'line-through text-gray-500' : 'text-gray-200'}`}
-                onDoubleClick={onEditStart}
+                onDoubleClick={e => {
+                  e.stopPropagation()
+                  onEditStart()
+                }}
               >
                 {task.title}
               </span>
@@ -642,7 +655,10 @@ function TaskRow({
       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {!isDone && !isEditing && (
           <button
-            onClick={onEditStart}
+            onClick={e => {
+              e.stopPropagation()
+              onEditStart()
+            }}
             disabled={disabled}
             title="Edit"
             className="px-2 py-1 text-xs text-gray-500 hover:text-indigo-400 rounded transition-colors"
@@ -652,7 +668,10 @@ function TaskRow({
         )}
         {!isDone && (
           <button
-            onClick={onRollover}
+            onClick={e => {
+              e.stopPropagation()
+              onRollover()
+            }}
             disabled={disabled}
             title="Move to next day"
             className="px-2 py-1 text-xs text-gray-500 hover:text-yellow-400 rounded transition-colors"
@@ -661,7 +680,10 @@ function TaskRow({
           </button>
         )}
         <button
-          onClick={onDelete}
+          onClick={e => {
+            e.stopPropagation()
+            onDelete()
+          }}
           disabled={disabled}
           className="px-2 py-1 text-xs text-gray-500 hover:text-red-400 rounded transition-colors"
         >
