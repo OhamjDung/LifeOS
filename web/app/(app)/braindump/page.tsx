@@ -3,9 +3,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import DeleteTasksModal from '@/components/DeleteTasksModal'
 
 type Category = 'Tasks' | 'Notes' | 'Contacts'
 const CATS: Category[] = ['Tasks', 'Notes', 'Contacts']
+type DeleteCandidate = { id: string; title: string }
 
 type ResultState =
   | { type: 'idle' }
@@ -23,6 +25,7 @@ export default function BraindumpPage() {
   const [result, setResult] = useState<ResultState>({ type: 'idle' })
   const [reprompt, setReprompt] = useState('')
   const [reprompting, setReprompting] = useState(false)
+  const [deleteCandidates, setDeleteCandidates] = useState<DeleteCandidate[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<any>(null)
@@ -150,6 +153,7 @@ export default function BraindumpPage() {
           categories,
           originalTranscript,
         })
+        if (body?.pendingDeletions?.length) setDeleteCandidates(body.pendingDeletions)
       } catch (err: any) {
         console.error('[braindump] fn-process-braindump error:', err)
         setResult({ type: 'error', message: err?.message ?? 'Processing failed' })
@@ -202,6 +206,7 @@ export default function BraindumpPage() {
         created: [...prev.created, ...(body?.created ?? [])],
         merged: [...prev.merged, ...(body?.merged ?? [])],
       } : prev)
+      if (body?.pendingDeletions?.length) setDeleteCandidates(prev => [...prev, ...body.pendingDeletions])
     } catch (err: any) {
       console.error('[braindump] reprompt error:', err)
     } finally {
@@ -392,6 +397,14 @@ export default function BraindumpPage() {
           </div>
         )}
       </div>
+
+      {deleteCandidates.length > 0 && (
+        <DeleteTasksModal
+          candidates={deleteCandidates}
+          onClose={() => setDeleteCandidates([])}
+          onConfirm={() => setDeleteCandidates([])}
+        />
+      )}
     </div>
   )
 }

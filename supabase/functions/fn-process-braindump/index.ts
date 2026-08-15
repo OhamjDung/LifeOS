@@ -37,7 +37,7 @@ const extractionTool = {
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['create', 'merge', 'possible_duplicate'] },
+              action: { type: 'string', enum: ['create', 'merge', 'possible_duplicate', 'delete'] },
               title: { type: 'string' },
               existing_id: { type: 'string', description: 'UUID of task to merge into' },
             },
@@ -58,10 +58,10 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 async function processJob(job: { id: string; user_id: string; raw_transcript: string }): Promise<{
-  created: string[]; merged: string[]; duplicates: string[]
+  created: string[]; merged: string[]; duplicates: string[]; pendingDeletions: { id: string; title: string }[]
 }> {
   console.log('[process-braindump] job:', job.id, 'transcript:', job.raw_transcript.slice(0, 100))
-  const outcome = { created: [] as string[], merged: [] as string[], duplicates: [] as string[] }
+  const outcome = { created: [] as string[], merged: [] as string[], duplicates: [] as string[], pendingDeletions: [] as { id: string; title: string }[] }
 
   try {
     await supabase
@@ -75,7 +75,6 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
       .from('tasks')
       .select('id, title')
       .eq('user_id', job.user_id)
-      .eq('due_date', today)
       .eq('status', 'pending')
 
     const existingList = existingTasks ?? []
@@ -93,8 +92,9 @@ Rules:
 - If the user writes explicit todos ("call X", "email Y") — extract those directly.
 - If the user dumps reference info (links, names, notes) — turn each into a concrete follow-up task.
 - Be generous: when in doubt, create the task.
+- If the user explicitly asks to cancel, remove, or delete an existing task ("never mind the dentist thing", "cancel research X"), emit action "delete" with existing_id set to the matching task's id from the list below. Only do this when confident about the match — if unsure which task they mean, don't emit a delete for it.
 
-Existing tasks today: ${JSON.stringify(existingList.map(t => ({ id: t.id, title: t.title })))}.
+Existing pending tasks: ${JSON.stringify(existingList.map(t => ({ id: t.id, title: t.title })))}.
 Cosine similarity thresholds: >0.85 merge, 0.65–0.85 flag as possible_duplicate, <0.65 create new.
 Merge only if near-identical.`,
         },
@@ -144,6 +144,12 @@ Merge only if near-identical.`,
       } else if (task.action === 'merge' && task.existing_id) {
         console.log('[process-braindump] merged into existing:', task.existing_id)
         outcome.merged.push(task.title)
+      } else if (task.action === 'delete' && task.existing_id) {
+        const match = existingList.find(t => t.id === task.existing_id)
+        if (match) {
+          console.log('[process-braindump] flagged for deletion:', match.title)
+          outcome.pendingDeletions.push({ id: match.id, title: match.title })
+        }
       } else if (task.action === 'possible_duplicate') {
         console.log('[process-braindump] possible_duplicate — creating anyway:', task.title)
         const { error: insertErr } = await supabase.from('tasks').insert({
@@ -204,6 +210,7 @@ Deno.serve(async (req) => {
 
   const created: string[] = []
   const merged: string[] = []
+  const pendingDeletions: { id: string; title: string }[] = []
   for (let i = 0; i < jobs.length; i++) {
     if (results[i].status === 'rejected') {
       await supabase.rpc('increment_retry', { job_id: jobs[i].id })
@@ -211,10 +218,11 @@ Deno.serve(async (req) => {
       const v = (results[i] as PromiseFulfilledResult<any>).value
       created.push(...(v?.created ?? []))
       merged.push(...(v?.merged ?? []))
+      pendingDeletions.push(...(v?.pendingDeletions ?? []))
     }
   }
 
-  return new Response(JSON.stringify({ processed: jobs.length, created, merged }), {
+  return new Response(JSON.stringify({ processed: jobs.length, created, merged, pendingDeletions }), {
     headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })
