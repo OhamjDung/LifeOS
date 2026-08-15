@@ -5,3 +5,4 @@ mobile/.env
 mobile/node_modules/
 mobile/ios/
 mobile/android/
+supabase/.temp/
