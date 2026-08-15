@@ -61,16 +61,29 @@ Env vars in `mobile/.env`: `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANO
 
 ## AI Models
 
-All AI calls use GitHub Models (free) via OpenAI SDK with a custom base URL:
+Chat/completions use DeepSeek via OpenAI SDK with a custom base URL:
 
 ```typescript
 const openai = new OpenAI({
-  baseURL: 'https://models.inference.ai.azure.com',
-  apiKey: Deno.env.get('GITHUB_TOKEN'),
+  baseURL: 'https://api.deepseek.com',
+  apiKey: Deno.env.get('DEEPSEEK_TOKEN'),
 })
 ```
 
-Models in use: `gpt-4o` (task extraction), `gpt-4o-mini` (categorization, CRM drafts), `text-embedding-3-small` (note embeddings + search). `GITHUB_TOKEN` is a Supabase Edge Function secret — never in web client or mobile binary.
+Embeddings use Jina AI directly (`https://api.jina.ai/v1/embeddings`, model `jina-embeddings-v3`) via `JINA_API_KEY` — not DeepSeek, no embeddings model there.
+
+Model in use for all chat calls: `deepseek-v4-flash` (task extraction, note categorization, CRM drafts, auto-tag, task grouping) — cheap/fast tier, not `-pro`.
+
+| Function | Uses |
+|---|---|
+| `fn-process-braindump` | `deepseek-v4-flash` + Jina embeddings (dedup) |
+| `fn-embed-note` | Jina embeddings + `deepseek-v4-flash` (category/tags) |
+| `fn-auto-tag` | `deepseek-v4-flash` |
+| `fn-draft-catchup` | `deepseek-v4-flash` |
+| `fn-group-tasks` | `deepseek-v4-flash` |
+| `fn-transcribe` | Groq (`https://api.groq.com/openai/v1`), separate `GROQ_API_KEY` |
+
+Secrets (Supabase Edge Function secrets — never in web client or mobile binary): `DEEPSEEK_TOKEN`, `JINA_API_KEY`, `GROQ_API_KEY`. `GITHUB_TOKEN` still exists as a secret but is unused legacy from the pre-DeepSeek GitHub Models setup.
 
 ## Supabase
 
