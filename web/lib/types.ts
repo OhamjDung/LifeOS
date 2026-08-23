@@ -16,6 +16,7 @@ export interface Task {
   id: string
   user_id: string
   title: string
+  description: string | null
   status: TaskStatus
   task_type: TaskType
   due_date: string
@@ -27,6 +28,20 @@ export interface Task {
   created_at: string
   updated_at: string
   tags?: { id: string; name: string }[]
+}
+
+export type SubtaskStatus = 'pending' | 'done'
+
+export interface Subtask {
+  id: string
+  task_id: string
+  user_id: string
+  title: string
+  group_name: string | null
+  status: SubtaskStatus
+  sort_order: number
+  created_at: string
+  updated_at: string
 }
 
 export interface BraindumpJob {
