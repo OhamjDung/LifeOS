@@ -28,6 +28,7 @@ export interface Task {
   created_at: string
   updated_at: string
   tags?: { id: string; name: string }[]
+  subtasks?: Subtask[]
 }
 
 export type SubtaskStatus = 'pending' | 'done'

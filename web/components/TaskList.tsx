@@ -583,8 +583,11 @@ function TaskRow({
     month: 'short',
     day: 'numeric',
   })
+  const subtasks = task.subtasks ?? []
+  const subtaskDone = subtasks.filter(s => s.status === 'done').length
 
   return (
+    <div>
     <div
       onClick={onSelect}
       className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 cursor-pointer transition-colors ${
@@ -646,6 +649,11 @@ function TaskRow({
                   {task.tags[0].name}
                 </span>
               ) : null}
+              {subtasks.length > 0 && (
+                <span className="text-xs text-gray-600">
+                  ☑ {subtaskDone}/{subtasks.length}
+                </span>
+              )}
               <span className="text-xs text-gray-600">{dueStr}</span>
             </div>
           </>
@@ -690,6 +698,28 @@ function TaskRow({
           ✕
         </button>
       </div>
+    </div>
+    {subtasks.length > 0 && (
+      <div className="ml-8 mt-1.5 space-y-1">
+        {subtasks.map(st => (
+          <div
+            key={st.id}
+            className="flex items-center gap-2 text-xs text-gray-500"
+          >
+            <span
+              className={`w-3 h-3 shrink-0 rounded-full border ${
+                st.status === 'done'
+                  ? 'bg-indigo-600 border-indigo-600'
+                  : 'border-gray-600'
+              }`}
+            />
+            <span className={st.status === 'done' ? 'line-through text-gray-600' : 'text-gray-400'}>
+              {st.title}
+            </span>
+          </div>
+        ))}
+      </div>
+    )}
     </div>
   )
 }

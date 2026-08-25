@@ -35,11 +35,12 @@ export default async function TasksPage({
   const [{ data: rawTasks }, { data: contacts }, { data: calData }] = await Promise.all([
     supabase
       .from('tasks')
-      .select('*, task_tags(tag_id, tags(id,name))')
+      .select('*, task_tags(tag_id, tags(id,name)), subtasks(*)')
       .eq('due_date', today)
       .neq('status', 'rolled_over')
       .order('rollover_count', { ascending: false })
-      .order('created_at', { ascending: true }),
+      .order('created_at', { ascending: true })
+      .order('sort_order', { foreignTable: 'subtasks', ascending: true }),
     supabase.from('contacts').select('id, name').order('name'),
     supabase
       .from('tasks')
