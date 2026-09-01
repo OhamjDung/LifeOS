@@ -71,7 +71,7 @@ async function processNote(note: { id: string; content: string; title: string | 
   console.log('[embed-note] processing note:', note.id, 'title:', note.title?.slice(0, 50) ?? 'Untitled')
   await supabase
     .from('notes')
-    .update({ processing_status: 'processing' })
+    .update({ processing_status: 'processing', updated_at: new Date().toISOString() })
     .eq('id', note.id)
 
   const chunks = chunkText(note.content)
@@ -174,10 +174,11 @@ const cors = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors })
 
+  const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString()
   const { data: notes } = await supabase
     .from('notes')
     .select('id, content, title, user_id, created_at')
-    .eq('processing_status', 'pending')
+    .or(`processing_status.eq.pending,and(processing_status.eq.processing,updated_at.lt.${staleBefore})`)
     .lt('retry_count', 3)
     .limit(10)
 
