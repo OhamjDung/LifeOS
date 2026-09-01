@@ -28,7 +28,7 @@ export function EndSessionModal({
         .eq('is_session_created', true)
       const rows = (data as SessionTask[]) ?? []
       setCandidates(rows)
-      setKeep(Object.fromEntries(rows.map(r => [r.id, true])))
+      setKeep(Object.fromEntries(rows.map(r => [r.id, r.task?.status !== 'done'])))
       setLoaded(true)
     })()
   }, [sessionId])
