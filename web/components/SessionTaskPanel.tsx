@@ -10,6 +10,7 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
   const [loaded, setLoaded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Task[]>([])
+  const [searchOpen, setSearchOpen] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [subtaskDrafts, setSubtaskDrafts] = useState<Record<string, string>>({})
   const [subtasksByTask, setSubtasksByTask] = useState<Record<string, Subtask[]>>({})
@@ -45,23 +46,21 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
   }, [sessionId])
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    if (!searchOpen) {
       setSearchResults([])
       return
     }
     const linkedIds = new Set(sessionTasks.map(st => st.task_id))
+    const query = searchQuery.trim()
     const handle = setTimeout(async () => {
-      const { data } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('status', 'pending')
-        .ilike('title', `%${searchQuery.trim()}%`)
-        .limit(10)
+      let req = supabase.from('tasks').select('*').eq('status', 'pending')
+      if (query) req = req.ilike('title', `%${query}%`)
+      const { data } = await req.order('due_date', { ascending: true }).limit(50)
       setSearchResults(((data as Task[]) ?? []).filter(t => !linkedIds.has(t.id)))
     }, 250)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, sessionTasks])
+  }, [searchQuery, searchOpen, sessionTasks])
 
   async function addExistingTask(task: Task) {
     const { data: { user } } = await supabase.auth.getUser()
@@ -168,11 +167,13 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
           <input
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
             placeholder="Search existing tasks to add…"
             className="w-full text-sm px-3 py-2 rounded-lg border bg-transparent outline-none"
             style={{ borderColor, color: textColor }}
           />
-          {searchResults.length > 0 && (
+          {searchOpen && searchResults.length > 0 && (
             <div className="absolute z-10 w-full mt-1 rounded-lg border bg-[#DEDAD2] text-[#1C1A14] max-h-48 overflow-y-auto" style={{ borderColor: 'rgba(28,26,20,0.15)' }}>
               {searchResults.map(t => (
                 <button
