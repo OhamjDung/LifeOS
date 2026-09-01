@@ -26,6 +26,7 @@ export interface Task {
   raw_source: string | null
   mode_at_creation: string | null
   ai_merged_from: string | null
+  group_id: string | null
   created_at: string
   updated_at: string
   tags?: { id: string; name: string }[]
@@ -40,10 +41,21 @@ export interface Subtask {
   user_id: string
   title: string
   group_name: string | null
+  parent_subtask_id: string | null
   status: SubtaskStatus
   sort_order: number
   created_at: string
   updated_at: string
+}
+
+export type TaskGroupColor = 'indigo' | 'orange' | 'green' | 'yellow' | 'rose' | 'cyan' | 'purple'
+
+export interface PersistedTaskGroup {
+  id: string
+  user_id: string
+  name: string
+  color: TaskGroupColor
+  created_at: string
 }
 
 export type SessionStatus = 'active' | 'ended'

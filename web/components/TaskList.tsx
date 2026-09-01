@@ -1,13 +1,14 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Task, Contact, TaskType } from '@/lib/types'
+import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/lib/types'
 import { useTaskSelection } from '@/lib/taskSelection'
 
-type GroupColor = 'indigo' | 'orange' | 'green' | 'yellow' | 'rose' | 'cyan' | 'purple'
+type GroupColor = TaskGroupColor
 
-interface TaskGroup {
+// Shape returned by fn-group-tasks (AI's raw suggestion, before it's persisted as task_groups rows).
+interface AiGroupSuggestion {
   name: string
   color: GroupColor
   task_ids: string[]
@@ -95,61 +96,197 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   const [newContactId, setNewContactId] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
-  const [isPending, startTransition] = useTransition()
+  const [editingDueId, setEditingDueId] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [dragSection, setDragSection] = useState<'followUp' | 'pending' | null>(null)
-  // Group view state
+  // Group view state — groups are persisted (task_groups table + tasks.group_id), so they
+  // survive tab switches/reload; groupView itself just remembers which display mode to default to.
   const [grouping, setGrouping] = useState(false)
-  const [groupView, setGroupView] = useState(false)
-  const [groups, setGroups] = useState<TaskGroup[]>([])
-  const [ungroupedIds, setUngroupedIds] = useState<string[]>([])
+  const [groupView, setGroupView] = useState(() => initialTasks.some(t => t.group_id))
+  const [persistedGroups, setPersistedGroups] = useState<PersistedTaskGroup[]>([])
   const [groupError, setGroupError] = useState<string | null>(null)
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
+  const [orderBy, setOrderBy] = useState<'created' | 'due'>('created')
+  // Priority mode: while active, clicking a row stages/unstages it instead of opening the detail pane.
+  // Staged selection only becomes real (`is_priority`) when priority mode is turned back off.
+  const [priorityMode, setPriorityMode] = useState(false)
+  const [stagedPriorityIds, setStagedPriorityIds] = useState<Set<string>>(new Set())
   const supabase = createClient()
-  const { select } = useTaskSelection()
+  const { select, selected } = useTaskSelection()
 
-  const followUp = tasks.filter(t => t.status === 'pending' && !!t.contact_id)
-  const pending = tasks.filter(t => t.status === 'pending' && !t.contact_id)
+  // B-screen detail pane owns its own edits (description, subtasks) — mirror them back
+  // into this list's state so the A-screen row (badge, nested subtasks) stays live.
+  useEffect(() => {
+    if (!selected) return
+    setTasks(prev => prev.map(t => (t.id === selected.id ? selected : t)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected])
+
+  useEffect(() => {
+    supabase
+      .from('task_groups')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .then(({ data }) => setPersistedGroups((data as PersistedTaskGroup[]) ?? []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function moveTaskToGroup(taskId: string, groupId: string | null) {
+    const prevTasks = tasks
+    setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, group_id: groupId } : t)))
+    const { error } = await supabase
+      .from('tasks')
+      .update({ group_id: groupId, updated_at: new Date().toISOString() })
+      .eq('id', taskId)
+    if (error) setTasks(prevTasks)
+  }
+
+  function handleGroupDragStart(taskId: string) {
+    setDraggedTaskId(taskId)
+  }
+
+  function handleGroupDrop(groupId: string | null) {
+    if (draggedTaskId) moveTaskToGroup(draggedTaskId, groupId)
+    setDraggedTaskId(null)
+  }
+
+  function orderTasks(arr: Task[]) {
+    // 'created' keeps the fetch order (rollover priority, then creation order) — leave as-is.
+    const base =
+      orderBy === 'due'
+        ? [...arr].sort((a, b) =>
+            a.due_date === b.due_date
+              ? a.created_at.localeCompare(b.created_at)
+              : a.due_date.localeCompare(b.due_date),
+          )
+        : arr
+    // Stable partition: prioritized tasks float to top, ordering within each group untouched.
+    return [...base].sort((a, b) => Number(b.is_priority) - Number(a.is_priority))
+  }
+
+  const followUp = orderTasks(tasks.filter(t => t.status === 'pending' && !!t.contact_id))
+  const pending = orderTasks(tasks.filter(t => t.status === 'pending' && !t.contact_id))
   const done = tasks.filter(t => t.status === 'done')
+
+  function togglePriorityMode() {
+    if (!priorityMode) {
+      setStagedPriorityIds(new Set(tasks.filter(t => t.is_priority).map(t => t.id)))
+      setPriorityMode(true)
+      return
+    }
+    // Turning off — commit staged selection as the real is_priority flags.
+    const changed = tasks.filter(t => stagedPriorityIds.has(t.id) !== t.is_priority)
+    setPriorityMode(false)
+    if (changed.length === 0) return
+
+    const prevTasks = tasks
+    setTasks(prev => prev.map(t => ({ ...t, is_priority: stagedPriorityIds.has(t.id) })))
+
+    const toPrioritize = changed.filter(t => stagedPriorityIds.has(t.id)).map(t => t.id)
+    const toUnprioritize = changed.filter(t => !stagedPriorityIds.has(t.id)).map(t => t.id)
+    const writes: PromiseLike<{ error: any }>[] = []
+    if (toPrioritize.length > 0) {
+      writes.push(
+        supabase
+          .from('tasks')
+          .update({ is_priority: true, updated_at: new Date().toISOString() })
+          .in('id', toPrioritize),
+      )
+    }
+    if (toUnprioritize.length > 0) {
+      writes.push(
+        supabase
+          .from('tasks')
+          .update({ is_priority: false, updated_at: new Date().toISOString() })
+          .in('id', toUnprioritize),
+      )
+    }
+    Promise.all(writes).then(results => {
+      if (results.some(r => r.error)) setTasks(prevTasks)
+    })
+  }
+
+  function toggleStagedPriority(taskId: string) {
+    setStagedPriorityIds(prev => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }
 
   async function addTask(e: React.FormEvent) {
     e.preventDefault()
-    if (!newTitle.trim()) return
+    const title = newTitle.trim()
+    if (!title) return
 
+    const dueDate = newDate
+    const taskType = newType
+    const contactId = newContactId || null
+    setNewTitle('')
+    setNewDate(today)
+    setNewType('task')
+    setNewContactId('')
+
+    // Optimistic insert — paint the row now, reconcile with the real id once the insert returns.
     const {
-      data: { user },
-    } = await supabase.auth.getUser()
+      data: { session },
+    } = await supabase.auth.getSession()
+    const userId = session?.user?.id ?? ''
+    const tempId = `temp-${Date.now()}`
+    const optimisticTask: Task = {
+      id: tempId,
+      user_id: userId,
+      title,
+      description: null,
+      status: 'pending',
+      task_type: taskType,
+      due_date: dueDate,
+      contact_id: contactId,
+      rollover_count: 0,
+      is_priority: false,
+      raw_source: null,
+      mode_at_creation: null,
+      ai_merged_from: null,
+      group_id: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      tags: [],
+      subtasks: [],
+    }
+    setTasks(prev => [...prev, optimisticTask])
+
     const { data, error } = await supabase
       .from('tasks')
       .insert({
-        title: newTitle.trim(),
-        due_date: newDate,
-        task_type: newType,
-        contact_id: newContactId || null,
-        user_id: user?.id,
+        title,
+        due_date: dueDate,
+        task_type: taskType,
+        contact_id: contactId,
+        user_id: userId,
       })
       .select()
       .single()
 
-    if (!error && data) {
-      setTasks(prev => [...prev, { ...data, tags: [] } as Task])
-      setNewTitle('')
-      setNewDate(today)
-      setNewType('task')
-      setNewContactId('')
+    if (error || !data) {
+      setTasks(prev => prev.filter(t => t.id !== tempId))
+      return
     }
+    setTasks(prev => prev.map(t => (t.id === tempId ? ({ ...data, tags: [], subtasks: [] } as Task) : t)))
   }
 
   async function markDone(task: Task) {
     const newStatus = task.status === 'done' ? 'pending' : 'done'
+    const prevTasks = tasks
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status: newStatus } : t)))
+
     const { error } = await supabase
       .from('tasks')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', task.id)
 
-    if (!error) {
-      setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status: newStatus } : t)))
-    }
+    if (error) setTasks(prevTasks)
   }
 
   async function rollover(task: Task) {
@@ -157,44 +294,87 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     next.setDate(next.getDate() + 1)
     const nextStr = next.toISOString().split('T')[0]
 
-    startTransition(async () => {
-      const { error } = await supabase
-        .from('tasks')
-        .update({ due_date: nextStr, status: 'rolled_over', updated_at: new Date().toISOString() })
-        .eq('id', task.id)
+    const prevTasks = tasks
+    setTasks(prev => prev.filter(t => t.id !== task.id))
 
-      if (!error) {
-        await supabase.from('task_rollovers').insert({
-          task_id: task.id,
-          from_date: task.due_date,
-          to_date: nextStr,
-        })
-        setTasks(prev => prev.filter(t => t.id !== task.id))
-      }
+    const { error } = await supabase
+      .from('tasks')
+      .update({ due_date: nextStr, status: 'rolled_over', updated_at: new Date().toISOString() })
+      .eq('id', task.id)
+
+    if (error) {
+      setTasks(prevTasks)
+      return
+    }
+    // Rollover count is secondary bookkeeping — the row already moved, don't undo the UI over it.
+    const { error: insErr } = await supabase.from('task_rollovers').insert({
+      task_id: task.id,
+      from_date: task.due_date,
+      to_date: nextStr,
     })
+    if (insErr) console.error('task_rollovers insert failed', insErr)
   }
 
   async function saveEdit(task: Task) {
-    if (!editTitle.trim() || editTitle.trim() === task.title) {
-      setEditingId(null)
-      return
-    }
+    const title = editTitle.trim()
+    setEditingId(null)
+    if (!title || title === task.title) return
+
+    const prevTasks = tasks
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, title } : t)))
+
     const { error } = await supabase
       .from('tasks')
-      .update({ title: editTitle.trim(), updated_at: new Date().toISOString() })
+      .update({ title, updated_at: new Date().toISOString() })
       .eq('id', task.id)
 
-    if (!error) {
-      setTasks(prev =>
-        prev.map(t => (t.id === task.id ? { ...t, title: editTitle.trim() } : t)),
-      )
-    }
-    setEditingId(null)
+    if (error) setTasks(prevTasks)
+  }
+
+  async function updateDueDate(task: Task, newDate: string) {
+    setEditingDueId(null)
+    if (!newDate || newDate === task.due_date) return
+
+    const prevTasks = tasks
+    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, due_date: newDate } : t)))
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({ due_date: newDate, updated_at: new Date().toISOString() })
+      .eq('id', task.id)
+
+    if (error) setTasks(prevTasks)
   }
 
   async function deleteTask(id: string) {
+    const prevTasks = tasks
+    setTasks(prev => prev.filter(t => t.id !== id))
+
     const { error } = await supabase.from('tasks').delete().eq('id', id)
-    if (!error) setTasks(prev => prev.filter(t => t.id !== id))
+    if (error) setTasks(prevTasks)
+  }
+
+  async function toggleSubtask(taskId: string, subtaskId: string) {
+    const task = tasks.find(t => t.id === taskId)
+    const st = task?.subtasks?.find(s => s.id === subtaskId)
+    if (!st) return
+    const newStatus = st.status === 'done' ? 'pending' : 'done'
+
+    const prevTasks = tasks
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === taskId
+          ? { ...t, subtasks: (t.subtasks ?? []).map(s => (s.id === subtaskId ? { ...s, status: newStatus } : s)) }
+          : t,
+      ),
+    )
+
+    const { error } = await supabase
+      .from('subtasks')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', subtaskId)
+
+    if (error) setTasks(prevTasks)
   }
 
   function handleDragStart(idx: number, section: 'followUp' | 'pending') {
@@ -244,6 +424,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       const {
         data: { session },
       } = await supabase.auth.getSession()
+      const { data: { user } } = await supabase.auth.getUser()
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-group-tasks`
       const resp = await fetch(url, {
         method: 'POST',
@@ -260,13 +441,46 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
         throw new Error(`${resp.status}: ${errText.slice(0, 120)}`)
       }
       const data = await resp.json()
-      const parsedGroups = (data.groups as TaskGroup[]) ?? []
-      if (parsedGroups.length === 0) {
+      const suggestions = (data.groups as AiGroupSuggestion[]) ?? []
+      const aiUngroupedIds = (data.ungrouped_ids as string[]) ?? []
+      if (suggestions.length === 0) {
         setGroupError('AI returned no groups — tasks may be too similar or too few.')
         return
       }
-      setGroups(parsedGroups)
-      setUngroupedIds((data.ungrouped_ids as string[]) ?? [])
+
+      // Persist each AI suggestion as a real task_groups row, then assign tasks to it —
+      // this is what makes grouping survive a tab switch instead of living only in this component's state.
+      const newGroups: PersistedTaskGroup[] = []
+      const assignment: Record<string, string> = {}
+      for (const s of suggestions) {
+        const { data: created, error } = await supabase
+          .from('task_groups')
+          .insert({ user_id: user?.id, name: s.name, color: s.color })
+          .select()
+          .single()
+        if (error || !created) continue
+        newGroups.push(created as PersistedTaskGroup)
+        for (const taskId of s.task_ids) assignment[taskId] = created.id
+      }
+
+      for (const g of newGroups) {
+        const ids = Object.keys(assignment).filter(id => assignment[id] === g.id)
+        if (ids.length > 0) {
+          await supabase.from('tasks').update({ group_id: g.id, updated_at: new Date().toISOString() }).in('id', ids)
+        }
+      }
+      if (aiUngroupedIds.length > 0) {
+        await supabase.from('tasks').update({ group_id: null, updated_at: new Date().toISOString() }).in('id', aiUngroupedIds)
+      }
+
+      setPersistedGroups(prev => [...prev, ...newGroups])
+      setTasks(prev =>
+        prev.map(t => {
+          if (assignment[t.id]) return { ...t, group_id: assignment[t.id] }
+          if (aiUngroupedIds.includes(t.id)) return { ...t, group_id: null }
+          return t
+        }),
+      )
       setGroupView(true)
     } catch (e: any) {
       setGroupError(e.message ?? 'Grouping failed.')
@@ -276,6 +490,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   }
 
   function makeRowProps(task: Task) {
+    const isOptimistic = task.id.startsWith('temp-')
     return {
       task,
       editingId,
@@ -283,6 +498,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       onToggle: () => markDone(task),
       onRollover: () => rollover(task),
       onDelete: () => deleteTask(task.id),
+      onToggleSubtask: (subtaskId: string) => toggleSubtask(task.id, subtaskId),
       onEditStart: () => {
         setEditingId(task.id)
         setEditTitle(task.title)
@@ -290,33 +506,89 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       onEditChange: setEditTitle,
       onEditSave: () => saveEdit(task),
       onEditCancel: () => setEditingId(null),
-      onSelect: () => select(task),
-      disabled: isPending,
+      onSelect: () => (priorityMode ? toggleStagedPriority(task.id) : select(task)),
+      disabled: isOptimistic,
+      isOptimistic,
+      priorityMode,
+      isStagedPriority: stagedPriorityIds.has(task.id),
+      isEditingDue: editingDueId === task.id,
+      onDueClick: () => setEditingDueId(task.id),
+      onDueChange: (v: string) => updateDueDate(task, v),
+      onDueCancel: () => setEditingDueId(null),
     }
   }
 
   const activePendingCount = followUp.length + pending.length
+  const hasGroups = tasks.some(t => t.group_id)
 
   return (
     <div className="space-y-4">
-      {/* Group button toolbar */}
-      <div className="flex justify-start">
-        <button
-          onClick={groupView ? () => { setGroupView(false); setGroupError(null) } : handleGroupTasks}
-          disabled={grouping || (!groupView && activePendingCount < 2)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          {grouping ? (
-            <>
-              <span className="inline-block animate-spin">◌</span>
-              Grouping...
-            </>
-          ) : groupView ? (
-            <>≡ List View</>
-          ) : (
-            <>⊞ Group Similar</>
+      {/* Order-by + group button toolbar */}
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-600">Order by</span>
+          <div className="flex rounded-lg overflow-hidden border border-gray-700">
+            {(['created', 'due'] as const).map(opt => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setOrderBy(opt)}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                  orderBy === opt
+                    ? 'bg-indigo-600 text-[#DEDAD2]'
+                    : 'bg-gray-800 text-gray-400 hover:text-[#1C1A14]'
+                }`}
+              >
+                {opt === 'created' ? 'Created' : 'Due date'}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={togglePriorityMode}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${
+              priorityMode
+                ? 'bg-yellow-600 border-yellow-600 text-[#DEDAD2]'
+                : 'border-gray-700 text-gray-400 hover:text-yellow-300 hover:border-yellow-700/50'
+            }`}
+          >
+            {priorityMode ? `★ Done (${stagedPriorityIds.size})` : '☆ Priority Mode'}
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={
+              groupView
+                ? () => { setGroupView(false); setGroupError(null) }
+                : hasGroups
+                  ? () => setGroupView(true)
+                  : handleGroupTasks
+            }
+            disabled={grouping || (!groupView && !hasGroups && activePendingCount < 2)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-700 text-gray-400 hover:text-indigo-300 hover:border-indigo-700/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            {grouping ? (
+              <>
+                <span className="inline-block animate-spin">◌</span>
+                Grouping...
+              </>
+            ) : groupView ? (
+              <>≡ List View</>
+            ) : (
+              <>⊞ {hasGroups ? 'Group View' : 'Group Similar'}</>
+            )}
+          </button>
+          {groupView && (
+            <button
+              onClick={handleGroupTasks}
+              disabled={grouping || activePendingCount < 2}
+              className="text-xs text-gray-500 hover:text-indigo-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Re-run AI grouping"
+            >
+              ↻ Re-group with AI
+            </button>
           )}
-        </button>
+        </div>
         {groupError && (
           <span className="ml-3 text-xs text-red-400">{groupError}</span>
         )}
@@ -418,29 +690,46 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       {followUp.length === 0 && pending.length === 0 && done.length === 0 ? (
         <p className="text-gray-500 text-sm text-center py-8">No tasks today. Add one above.</p>
       ) : groupView ? (
-        /* Group view */
+        /* Group view — drag a task onto a group card (or the Other section) to move it */
         <div className="space-y-4">
-          {groups.map(group => (
-            <GroupCard
-              key={group.name}
-              group={group}
-              tasks={tasks}
-              makeRowProps={makeRowProps}
-            />
-          ))}
+          {persistedGroups
+            .filter(g => tasks.some(t => t.group_id === g.id))
+            .map(group => (
+              <GroupCard
+                key={group.id}
+                group={group}
+                tasks={tasks}
+                ungroupedTasks={[...followUp, ...pending].filter(t => !t.group_id)}
+                makeRowProps={makeRowProps}
+                onDragStartTask={handleGroupDragStart}
+                onDragEndTask={() => setDraggedTaskId(null)}
+                onDropTask={() => handleGroupDrop(group.id)}
+                onAssignTask={taskId => moveTaskToGroup(taskId, group.id)}
+              />
+            ))}
           {/* Ungrouped tasks */}
-          {ungroupedIds.length > 0 && (
-            <div>
-              <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">Other</p>
-              <div className="space-y-2">
-                {tasks
-                  .filter(t => ungroupedIds.includes(t.id) && t.status !== 'done')
-                  .map(task => (
-                    <TaskRow key={task.id} {...makeRowProps(task)} />
-                  ))}
-              </div>
+          <div
+            onDragOver={e => e.preventDefault()}
+            onDrop={() => handleGroupDrop(null)}
+            className="rounded-xl border border-dashed border-gray-700/60 p-3 min-h-[3rem]"
+          >
+            <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">Other (drop here to ungroup)</p>
+            <div className="space-y-2">
+              {[...followUp, ...pending]
+                .filter(t => !t.group_id)
+                .map(task => (
+                  <div
+                    key={task.id}
+                    draggable
+                    onDragStart={() => handleGroupDragStart(task.id)}
+                    onDragEnd={() => setDraggedTaskId(null)}
+                    className="cursor-grab active:cursor-grabbing"
+                  >
+                    <TaskRow {...makeRowProps(task)} />
+                  </div>
+                ))}
             </div>
-          )}
+          </div>
         </div>
       ) : (
         /* Flat list view */
@@ -451,12 +740,12 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               {followUp.map((task, idx) => (
                 <div
                   key={task.id}
-                  draggable
+                  draggable={orderBy === 'created' && !priorityMode}
                   onDragStart={() => handleDragStart(idx, 'followUp')}
                   onDragOver={e => handleDragOver(e, idx, 'followUp')}
                   onDrop={() => handleDrop(idx, 'followUp')}
                   onDragEnd={handleDragEnd}
-                  className={`cursor-grab active:cursor-grabbing transition-all ${
+                  className={`${orderBy === 'created' && !priorityMode ? 'cursor-grab active:cursor-grabbing' : ''} transition-all ${
                     dragOverIdx === idx && dragSection === 'followUp' && dragIdx !== idx
                       ? 'border-t-2 border-indigo-500 pt-0.5'
                       : ''
@@ -473,12 +762,12 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               {pending.map((task, idx) => (
                 <div
                   key={task.id}
-                  draggable
+                  draggable={orderBy === 'created'}
                   onDragStart={() => handleDragStart(idx, 'pending')}
                   onDragOver={e => handleDragOver(e, idx, 'pending')}
                   onDrop={() => handleDrop(idx, 'pending')}
                   onDragEnd={handleDragEnd}
-                  className={`cursor-grab active:cursor-grabbing transition-all ${
+                  className={`${orderBy === 'created' ? 'cursor-grab active:cursor-grabbing' : ''} transition-all ${
                     dragOverIdx === idx && dragSection === 'pending' && dragIdx !== idx
                       ? 'border-t-2 border-indigo-500 pt-0.5'
                       : ''
@@ -509,26 +798,49 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
 function GroupCard({
   group,
   tasks,
+  ungroupedTasks,
   makeRowProps,
+  onDragStartTask,
+  onDragEndTask,
+  onDropTask,
+  onAssignTask,
 }: {
-  group: TaskGroup
+  group: PersistedTaskGroup
   tasks: Task[]
+  ungroupedTasks: Task[]
   makeRowProps: (task: Task) => React.ComponentProps<typeof TaskRow>
+  onDragStartTask: (taskId: string) => void
+  onDragEndTask: () => void
+  onDropTask: () => void
+  onAssignTask: (taskId: string) => void
 }) {
-  const colors = GROUP_COLORS[group.color] ?? GROUP_COLORS.indigo
-  const groupTasks = tasks.filter(t => group.task_ids.includes(t.id))
+  const [showAdd, setShowAdd] = useState(false)
+  const colors = GROUP_COLORS[group.color as GroupColor] ?? GROUP_COLORS.indigo
+  const groupTasks = tasks.filter(t => t.group_id === group.id)
+  const pendingGroupTasks = groupTasks.filter(t => t.status !== 'done')
   const doneTasks = groupTasks.filter(t => t.status === 'done')
   const pct =
     groupTasks.length > 0 ? Math.round((doneTasks.length / groupTasks.length) * 100) : 0
 
   return (
-    <div className={`rounded-xl border p-4 ${colors.bg} ${colors.border}`}>
+    <div
+      onDragOver={e => e.preventDefault()}
+      onDrop={onDropTask}
+      className={`rounded-xl border p-4 ${colors.bg} ${colors.border}`}
+    >
       <div className="flex items-center gap-2 mb-2">
         <div className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
         <span className={`text-sm font-semibold ${colors.text}`}>{group.name}</span>
         <span className="text-xs text-gray-500 ml-auto">
           {doneTasks.length}/{groupTasks.length} done
         </span>
+        <button
+          onClick={() => setShowAdd(v => !v)}
+          className={`text-xs px-1.5 py-0.5 rounded hover:bg-black/10 transition-colors ${colors.text}`}
+          title="Add task to this group"
+        >
+          {showAdd ? '✕' : '+ add task'}
+        </button>
       </div>
       {/* Progress bar */}
       <div className={`h-1.5 rounded-full mb-3 ${colors.barBg}`}>
@@ -537,10 +849,37 @@ function GroupCard({
           style={{ width: `${pct}%` }}
         />
       </div>
-      {/* Tasks */}
+
+      {showAdd && (
+        <div className="mb-3 max-h-32 overflow-y-auto space-y-1 border border-black/10 rounded-lg p-2">
+          {ungroupedTasks.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">No ungrouped tasks.</p>
+          ) : (
+            ungroupedTasks.map(t => (
+              <button
+                key={t.id}
+                onClick={() => { onAssignTask(t.id); setShowAdd(false) }}
+                className="block w-full text-left text-xs px-2 py-1 rounded hover:bg-black/10 transition-colors"
+              >
+                {t.title}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Tasks — draggable so they can be moved into another group or ungrouped */}
       <div className="space-y-1.5">
-        {groupTasks.map(task => (
-          <TaskRow key={task.id} {...makeRowProps(task)} />
+        {pendingGroupTasks.map(task => (
+          <div
+            key={task.id}
+            draggable
+            onDragStart={() => onDragStartTask(task.id)}
+            onDragEnd={onDragEndTask}
+            className="cursor-grab active:cursor-grabbing"
+          >
+            <TaskRow {...makeRowProps(task)} />
+          </div>
         ))}
       </div>
     </div>
@@ -554,12 +893,20 @@ function TaskRow({
   onToggle,
   onRollover,
   onDelete,
+  onToggleSubtask,
   onEditStart,
   onEditChange,
   onEditSave,
   onEditCancel,
   onSelect,
   disabled,
+  isOptimistic,
+  priorityMode,
+  isStagedPriority,
+  isEditingDue,
+  onDueClick,
+  onDueChange,
+  onDueCancel,
 }: {
   task: Task
   editingId: string | null
@@ -567,12 +914,20 @@ function TaskRow({
   onToggle: () => void
   onRollover: () => void
   onDelete: () => void
+  onToggleSubtask: (subtaskId: string) => void
   onEditStart: () => void
   onEditChange: (v: string) => void
   onEditSave: () => void
   onEditCancel: () => void
   onSelect: () => void
   disabled: boolean
+  isOptimistic?: boolean
+  priorityMode?: boolean
+  isStagedPriority?: boolean
+  isEditingDue: boolean
+  onDueClick: () => void
+  onDueChange: (v: string) => void
+  onDueCancel: () => void
 }) {
   const isDone = task.status === 'done'
   const isEvent = task.task_type === 'event'
@@ -583,6 +938,10 @@ function TaskRow({
     month: 'short',
     day: 'numeric',
   })
+  const createdStr = new Date(task.created_at).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })
   const subtasks = task.subtasks ?? []
   const subtaskDone = subtasks.filter(s => s.status === 'done').length
 
@@ -590,9 +949,11 @@ function TaskRow({
     <div>
     <div
       onClick={onSelect}
-      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 cursor-pointer transition-colors ${
+      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 cursor-pointer transition-opacity ${
         isEvent ? 'border-indigo-900/60' : 'border-gray-800'
-      } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''}`}
+      } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''} ${isOptimistic ? 'opacity-60' : ''} ${
+        priorityMode && isStagedPriority ? 'ring-2 ring-yellow-500/70 border-yellow-600/60' : ''
+      }`}
     >
       <button
         onClick={e => {
@@ -626,6 +987,7 @@ function TaskRow({
         ) : (
           <>
             <div className="flex items-center gap-2">
+              {task.is_priority && <span className="text-xs text-yellow-500 shrink-0">★</span>}
               {isEvent && <span className="text-xs text-indigo-400 shrink-0">📅</span>}
               <span
                 className={`text-sm truncate ${isDone ? 'line-through text-gray-500' : 'text-gray-200'}`}
@@ -654,11 +1016,37 @@ function TaskRow({
                   ☑ {subtaskDone}/{subtasks.length}
                 </span>
               )}
-              <span className="text-xs text-gray-600">{dueStr}</span>
+              <span className="text-xs text-gray-600">{createdStr}</span>
             </div>
           </>
         )}
       </div>
+
+      {isEditingDue ? (
+        <input
+          type="date"
+          autoFocus
+          defaultValue={task.due_date}
+          onClick={e => e.stopPropagation()}
+          onChange={e => onDueChange(e.target.value)}
+          onBlur={onDueCancel}
+          onKeyDown={e => {
+            if (e.key === 'Escape') onDueCancel()
+          }}
+          className="text-xs bg-gray-800 border border-indigo-500 rounded px-1.5 py-0.5 text-gray-200 outline-none shrink-0"
+        />
+      ) : (
+        <span
+          onClick={e => {
+            e.stopPropagation()
+            if (!disabled) onDueClick()
+          }}
+          title="Change due date"
+          className="text-xs text-gray-500 shrink-0 whitespace-nowrap hover:text-indigo-300 hover:underline cursor-pointer"
+        >
+          Due {dueStr}
+        </span>
+      )}
 
       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {!isDone && !isEditing && (
@@ -704,10 +1092,14 @@ function TaskRow({
         {subtasks.map(st => (
           <div
             key={st.id}
-            className="flex items-center gap-2 text-xs text-gray-500"
+            onClick={e => {
+              e.stopPropagation()
+              onToggleSubtask(st.id)
+            }}
+            className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer hover:text-gray-300"
           >
             <span
-              className={`w-3 h-3 shrink-0 rounded-full border ${
+              className={`w-3 h-3 shrink-0 rounded-full border transition-colors ${
                 st.status === 'done'
                   ? 'bg-indigo-600 border-indigo-600'
                   : 'border-gray-600'
