@@ -81,7 +81,11 @@ export function QuickNotesWidget() {
   if (!hydrated) return null
 
   return (
-    <div className="fixed bottom-0 right-4 z-50 flex flex-col items-end">
+    <div
+      className="fixed bottom-0 right-4 z-50 flex flex-col items-end"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
       {open && (
         <div
           className="mb-2 w-80 rounded-t-xl border border-gray-700 bg-gray-900 shadow-2xl flex flex-col"
