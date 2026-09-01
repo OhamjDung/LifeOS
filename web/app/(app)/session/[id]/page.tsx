@@ -114,9 +114,14 @@ export default function SessionDetailPage() {
             </button>
           )}
           {session.phase === 'break' && (
-            <button onClick={startNextRound} disabled={!atZero && !isPaused} className="px-5 py-2.5 rounded-lg border disabled:opacity-40" style={{ borderColor: fg }}>
-              Start Next Round
-            </button>
+            <>
+              <button onClick={startNextRound} disabled={!atZero && !isPaused} className="px-5 py-2.5 rounded-lg border disabled:opacity-40" style={{ borderColor: fg }}>
+                Start Next Round
+              </button>
+              <button onClick={startNextRound} className="px-5 py-2.5 rounded-lg opacity-70 hover:opacity-100" style={{ color: fg }}>
+                Skip Break
+              </button>
+            </>
           )}
         </div>
       </div>
