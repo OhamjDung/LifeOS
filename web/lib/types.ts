@@ -64,6 +64,15 @@ export interface FocusSession {
   ended_at: string | null
 }
 
+export interface SessionRound {
+  id: string
+  session_id: string
+  user_id: string
+  round: number
+  lockin_rating: number | null
+  created_at: string
+}
+
 export interface SessionTask {
   id: string
   session_id: string

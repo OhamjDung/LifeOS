@@ -7,6 +7,7 @@ import { FocusSession } from '@/lib/types'
 import { remainingSeconds, formatMMSS } from '@/lib/sessionTimer'
 import { SessionTaskPanel } from '@/components/SessionTaskPanel'
 import { EndSessionModal } from '@/components/EndSessionModal'
+import { LockinRatingModal } from '@/components/LockinRatingModal'
 
 const WORK_BG = '#1C1A14'
 const BREAK_BG = '#DEDAD2'
@@ -22,6 +23,7 @@ export default function SessionDetailPage() {
   const [loaded, setLoaded] = useState(false)
   const [remaining, setRemaining] = useState(0)
   const [showEndModal, setShowEndModal] = useState(false)
+  const [showRatingModal, setShowRatingModal] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -107,7 +109,7 @@ export default function SessionDetailPage() {
             </button>
           )}
           {session.phase === 'work' && (
-            <button onClick={startBreak} disabled={!atZero && !isPaused} className="px-5 py-2.5 rounded-lg border disabled:opacity-40" style={{ borderColor: fg }}>
+            <button onClick={() => setShowRatingModal(true)} disabled={!atZero && !isPaused} className="px-5 py-2.5 rounded-lg border disabled:opacity-40" style={{ borderColor: fg }}>
               Start Break
             </button>
           )}
@@ -126,6 +128,17 @@ export default function SessionDetailPage() {
           sessionId={session.id}
           onClose={() => setShowEndModal(false)}
           onEnded={() => router.push('/session')}
+        />
+      )}
+
+      {showRatingModal && (
+        <LockinRatingModal
+          sessionId={session.id}
+          round={session.round}
+          onDone={() => {
+            setShowRatingModal(false)
+            startBreak()
+          }}
         />
       )}
     </div>
