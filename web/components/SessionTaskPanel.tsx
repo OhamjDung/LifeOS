@@ -103,6 +103,12 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
     loadAllTasks()
   }
 
+  async function unlinkTask(sessionTaskId: string) {
+    await supabase.from('session_tasks').delete().eq('id', sessionTaskId)
+    loadSessionTasks()
+    loadAllTasks()
+  }
+
   async function addSubtask(taskId: string) {
     const title = (subtaskDrafts[taskId] ?? '').trim()
     if (!title) return
@@ -154,6 +160,13 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
                   {st.is_session_created && (
                     <span className="text-[10px] uppercase tracking-wide opacity-50">session task</span>
                   )}
+                  <button
+                    onClick={() => unlinkTask(st.id)}
+                    title="Remove from session"
+                    className="text-xs opacity-50 hover:opacity-100 hover:text-red-500 px-1 transition-opacity"
+                  >
+                    ✕
+                  </button>
                 </div>
                 {(subtasksByTask[st.task_id] ?? []).length > 0 && (
                   <ul className="mt-1.5 ml-6 space-y-0.5">
