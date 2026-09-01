@@ -22,6 +22,7 @@ export interface Task {
   due_date: string
   contact_id: string | null
   rollover_count: number
+  is_priority: boolean
   raw_source: string | null
   mode_at_creation: string | null
   ai_merged_from: string | null
@@ -45,6 +46,43 @@ export interface Subtask {
   updated_at: string
 }
 
+export type SessionStatus = 'active' | 'ended'
+export type TimerPhase = 'work' | 'break' | 'idle'
+
+export interface FocusSession {
+  id: string
+  user_id: string
+  title: string | null
+  status: SessionStatus
+  work_minutes: number
+  break_minutes: number
+  phase: TimerPhase
+  phase_started_at: string | null
+  phase_remaining_seconds: number | null
+  round: number
+  created_at: string
+  ended_at: string | null
+}
+
+export interface SessionTask {
+  id: string
+  session_id: string
+  task_id: string
+  user_id: string
+  is_session_created: boolean
+  added_at: string
+  task?: Task
+}
+
+export interface BraindumpJobResult {
+  created: string[]
+  merged: string[]
+  pendingDeletions: { id: string; title: string }[]
+  contactsCreated: string[]
+  logs: string[]
+  errors: string[]
+}
+
 export interface BraindumpJob {
   id: string
   user_id: string
@@ -54,6 +92,7 @@ export interface BraindumpJob {
   processing_status: ProcessingStatus
   retry_count: number
   last_error: string | null
+  result: BraindumpJobResult | null
   created_at: string
 }
 
@@ -61,7 +100,17 @@ export interface Contact {
   id: string
   user_id: string
   name: string
+  title: string | null
+  education: string | null
+  location: string | null
+  email: string | null
+  phone: string | null
+  linkedin: string | null
   how_we_met: string | null
+  why_good_contact: string | null
+  less_useful_for: string | null
+  rating: string | null
+  next_step: string | null
   relationship_tier: RelationshipTier
   contact_tier: ContactTier
   last_contacted_at: string | null

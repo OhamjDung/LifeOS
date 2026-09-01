@@ -6,11 +6,11 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
 const NAV = [
-  { href: '/dashboard', icon: '⌂', label: 'TODAY'  },
-  { href: '/tasks',     icon: '☐', label: 'TASKS'  },
-  { href: '/braindump', icon: '◉', label: 'DUMP'   },
-  { href: '/notes',     icon: '≡', label: 'NOTES'  },
-  { href: '/contacts',  icon: '○', label: 'PEOPLE' },
+  { href: '/tasks',     icon: '☐', label: 'TASKS'   },
+  { href: '/session',   icon: '⏱', label: 'SESSION' },
+  { href: '/braindump', icon: '◉', label: 'DUMP'    },
+  { href: '/notes',     icon: '≡', label: 'NOTES'   },
+  { href: '/contacts',  icon: '○', label: 'PEOPLE'  },
 ]
 
 export function NavBar() {
