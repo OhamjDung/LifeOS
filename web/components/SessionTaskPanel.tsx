@@ -124,6 +124,20 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
     loadSessionTasks()
   }
 
+  async function toggleSubtask(sub: Subtask) {
+    const newStatus = sub.status === 'done' ? 'pending' : 'done'
+    await supabase
+      .from('subtasks')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', sub.id)
+    loadSessionTasks()
+  }
+
+  async function deleteSubtask(id: string) {
+    await supabase.from('subtasks').delete().eq('id', id)
+    loadSessionTasks()
+  }
+
   const borderColor = textColor === '#DEDAD2' ? 'rgba(222,218,210,0.25)' : 'rgba(28,26,20,0.15)'
   const linkedIds = new Set(sessionTasks.map(st => st.task_id))
   const query = filterQuery.trim().toLowerCase()
@@ -169,12 +183,33 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
                   </button>
                 </div>
                 {(subtasksByTask[st.task_id] ?? []).length > 0 && (
-                  <ul className="mt-1.5 ml-6 space-y-0.5">
-                    {subtasksByTask[st.task_id].map(sub => (
-                      <li key={sub.id} className="text-xs opacity-70">
-                        · {sub.title}
-                      </li>
-                    ))}
+                  <ul className="mt-1.5 ml-6 space-y-1">
+                    {subtasksByTask[st.task_id].map(sub => {
+                      const subDone = sub.status === 'done'
+                      return (
+                        <li key={sub.id} className="flex items-center gap-2 group">
+                          <button
+                            onClick={() => toggleSubtask(sub)}
+                            className={`w-3.5 h-3.5 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              subDone ? 'bg-indigo-600 border-indigo-600' : 'hover:border-indigo-400'
+                            }`}
+                            style={{ borderColor: subDone ? undefined : borderColor }}
+                          >
+                            {subDone && <span className="text-[#DEDAD2] text-[7px] leading-none">✓</span>}
+                          </button>
+                          <span className={`text-xs flex-1 ${subDone ? 'line-through opacity-50' : 'opacity-70'}`}>
+                            {sub.title}
+                          </span>
+                          <button
+                            onClick={() => deleteSubtask(sub.id)}
+                            title="Remove subtask"
+                            className="text-[10px] opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:text-red-500 transition-opacity px-1"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
                 <div className="flex gap-2 mt-2 ml-6">
