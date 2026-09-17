@@ -174,7 +174,7 @@ create table note_chunks (
   note_id     uuid not null references notes(id) on delete cascade,
   chunk_index int not null,
   chunk_text  text not null,
-  embedding   vector(1536),
+  embedding   vector(1024),  -- jina-embeddings-v3; see migrations_v11.sql
   created_at  timestamptz default now()
 );
 
@@ -186,7 +186,7 @@ create index on note_chunks(note_id);
 
 -- Search function (called by Edge Function)
 create or replace function search_notes(
-  query_embedding   vector(1536),
+  query_embedding   vector(1024),
   match_count       int,
   p_user_id         uuid,
   similarity_threshold float default 0.5
