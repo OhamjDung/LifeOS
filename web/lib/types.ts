@@ -100,8 +100,16 @@ export interface BraindumpJobResult {
   merged: string[]
   pendingDeletions: { id: string; title: string }[]
   contactsCreated: string[]
+  contactsUpdated?: string[]
+  interactionsLogged?: ContactInteractionLogged[]
   logs: string[]
   errors: string[]
+}
+
+export interface ContactInteractionLogged {
+  name: string
+  type: 'met' | 'message_sent'
+  date: string
 }
 
 export interface BraindumpJob {

@@ -4,16 +4,45 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import DeleteTasksModal from '@/components/DeleteTasksModal'
+import { BraindumpJob, ContactInteractionLogged } from '@/lib/types'
 
 type Category = 'Tasks' | 'Notes' | 'Contacts'
 const CATS: Category[] = ['Tasks', 'Notes', 'Contacts']
 type DeleteCandidate = { id: string; title: string }
 
-type ResultState =
-  | { type: 'idle' }
-  | { type: 'extracting'; categories: Category[]; noteContent?: string }
-  | { type: 'done'; created: string[]; merged: string[]; noteContent?: string; categories: Category[]; originalTranscript?: string }
-  | { type: 'error'; message: string }
+interface HistoryEntry {
+  id: string
+  createdAt: string
+  categories: Category[]
+  transcript: string
+  status: 'extracting' | 'done' | 'failed'
+  created: string[]
+  merged: string[]
+  contactsCreated: string[]
+  contactsUpdated: string[]
+  interactionsLogged: ContactInteractionLogged[]
+  noteContent?: string
+  logs: string[]
+  errors: string[]
+}
+
+function jobToEntry(job: BraindumpJob): HistoryEntry {
+  const categories = (job.categories?.length ? job.categories : ['Tasks']) as Category[]
+  return {
+    id: job.id,
+    createdAt: job.created_at,
+    categories,
+    transcript: job.raw_transcript ?? '',
+    status: job.processing_status === 'done' ? 'done' : job.processing_status === 'failed' ? 'failed' : 'extracting',
+    created: job.result?.created ?? [],
+    merged: job.result?.merged ?? [],
+    contactsCreated: job.result?.contactsCreated ?? [],
+    contactsUpdated: job.result?.contactsUpdated ?? [],
+    interactionsLogged: job.result?.interactionsLogged ?? [],
+    logs: job.result?.logs ?? [],
+    errors: job.result?.errors ?? (job.last_error ? [job.last_error] : []),
+  }
+}
 
 export default function BraindumpPage() {
   const [text, setText] = useState('')
@@ -22,14 +51,26 @@ export default function BraindumpPage() {
   const [transcribing, setTranscribing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [duration, setDuration] = useState(0)
-  const [result, setResult] = useState<ResultState>({ type: 'idle' })
-  const [reprompt, setReprompt] = useState('')
-  const [reprompting, setReprompting] = useState(false)
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [openDebugId, setOpenDebugId] = useState<string | null>(null)
   const [deleteCandidates, setDeleteCandidates] = useState<DeleteCandidate[]>([])
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<any>(null)
   const supabase = createClient()
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('braindump_jobs')
+        .select('id, user_id, audio_path, raw_transcript, categories, processing_status, retry_count, last_error, result, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      setHistory((data as BraindumpJob[] ?? []).map(jobToEntry))
+      setHistoryLoaded(true)
+    })()
+  }, [])
 
   useEffect(() => {
     if (recording) {
@@ -99,6 +140,59 @@ export default function BraindumpPage() {
     )
   }
 
+  async function handleReprompt(entry: HistoryEntry, instruction: string) {
+    if (!instruction.trim()) return
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const combined = `Original braindump: ${entry.transcript}\n\nCurrent extracted tasks: ${JSON.stringify(entry.created)}\n\nAdjustment: ${instruction.trim()}`
+    const { data: job, error } = await supabase
+      .from('braindump_jobs')
+      .insert({ raw_transcript: combined, user_id: user?.id, categories: entry.categories.filter(c => c !== 'Notes') })
+      .select('id, created_at')
+      .single()
+
+    if (error || !job) return
+    setHistory(prev => [{
+      id: job.id,
+      createdAt: job.created_at,
+      categories: entry.categories,
+      transcript: `Adjustment on previous dump: ${instruction.trim()}`,
+      status: 'extracting',
+      created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+    }, ...prev])
+    runExtraction(job.id, session)
+  }
+
+  async function runExtraction(jobId: string, session: any) {
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-process-braindump`,
+        { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
+      )
+      const body = await res.json().catch(() => null)
+      console.log('[braindump] fn-process-braindump response:', res.status, body)
+      if (body?.logs?.length) body.logs.forEach((l: string) => console.log('[braindump][reasoning]', l))
+      if (body?.errors?.length) body.errors.forEach((e: string) => console.error('[braindump][error]', e))
+
+      setHistory(prev => prev.map(h => h.id === jobId ? {
+        ...h,
+        status: res.ok && !body?.errors?.length ? 'done' : 'failed',
+        created: body?.created ?? [],
+        merged: body?.merged ?? [],
+        contactsCreated: body?.contactsCreated ?? [],
+        contactsUpdated: body?.contactsUpdated ?? [],
+        interactionsLogged: body?.interactionsLogged ?? [],
+        logs: body?.logs ?? [],
+        errors: body?.errors ?? (res.ok ? [] : [`HTTP ${res.status}${body ? ': ' + JSON.stringify(body) : ''}`]),
+      } : h))
+      if (body?.pendingDeletions?.length) setDeleteCandidates(prev => [...prev, ...body.pendingDeletions])
+    } catch (err: any) {
+      console.error('[braindump] fn-process-braindump error:', err)
+      setHistory(prev => prev.map(h => h.id === jobId ? { ...h, status: 'failed', errors: [err?.message ?? 'Processing failed'] } : h))
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const full = text.trim()
@@ -106,115 +200,56 @@ export default function BraindumpPage() {
 
     setSubmitting(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const jobs: PromiseLike<any>[] = []
+    const { data: { session } } = await supabase.auth.getSession()
 
-    if (categories.includes('Tasks') || categories.includes('Contacts')) {
-      jobs.push(supabase.from('braindump_jobs').insert({
-        raw_transcript: full,
-        user_id: user?.id,
-        categories: categories.filter(c => c !== 'Notes'),
-      }))
-    }
-    if (categories.includes('Notes')) {
-      jobs.push(supabase.from('notes').insert({
-        content: full,
-        user_id: user?.id,
-        source_platform: 'web',
-      }))
-    }
-    await Promise.all(jobs)
+    const needsProcessing = categories.includes('Tasks') || categories.includes('Contacts')
 
-    // Show extracting state immediately
-    const originalTranscript = full
-    setResult({
-      type: 'extracting',
-      categories,
-      noteContent: categories.includes('Notes') ? full : undefined,
-    })
-    setText('')
-    setReprompt('')
-    setSubmitting(false)
-
-    // Trigger AI processing for tasks/contacts
-    if (categories.includes('Tasks') || categories.includes('Contacts')) {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-process-braindump`,
-          { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
-        )
-        const body = await res.json().catch(() => null)
-        console.log('[braindump] fn-process-braindump response:', res.status, body)
-        setResult({
-          type: 'done',
-          created: body?.created ?? [],
-          merged: body?.merged ?? [],
-          noteContent: categories.includes('Notes') ? originalTranscript : undefined,
-          categories,
-          originalTranscript,
+    if (needsProcessing) {
+      const { data: job, error } = await supabase
+        .from('braindump_jobs')
+        .insert({
+          raw_transcript: full,
+          user_id: user?.id,
+          categories: categories.filter(c => c !== 'Notes'),
         })
-        if (body?.pendingDeletions?.length) setDeleteCandidates(body.pendingDeletions)
-      } catch (err: any) {
-        console.error('[braindump] fn-process-braindump error:', err)
-        setResult({ type: 'error', message: err?.message ?? 'Processing failed' })
+        .select('id, created_at')
+        .single()
+
+      if (!error && job) {
+        setHistory(prev => [{
+          id: job.id,
+          createdAt: job.created_at,
+          categories,
+          transcript: full,
+          status: 'extracting',
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+          noteContent: categories.includes('Notes') ? full : undefined,
+        }, ...prev])
+        runExtraction(job.id, session)
       }
-    } else {
-      // Notes only — done immediately
-      setResult({
-        type: 'done',
-        created: [],
-        merged: [],
-        noteContent: originalTranscript,
-        categories,
-        originalTranscript,
-      })
     }
-  }
 
-  async function handleReprompt(e: React.FormEvent) {
-    e.preventDefault()
-    if (!reprompt.trim() || result.type !== 'done') return
-    const instruction = reprompt.trim()
-    setReprompting(true)
-    setReprompt('')
-
-    const originalTranscript = result.originalTranscript ?? ''
-    const currentTasks = result.created
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: { session } } = await supabase.auth.getSession()
-
-      // Insert new braindump job with original transcript + adjustment instruction
-      const combined = `Original braindump: ${originalTranscript}\n\nCurrent extracted tasks: ${JSON.stringify(currentTasks)}\n\nAdjustment: ${instruction}`
-      await supabase.from('braindump_jobs').insert({
-        raw_transcript: combined,
-        user_id: user?.id,
-        categories: result.categories.filter(c => c !== 'Notes'),
-      })
-
-      setResult(prev => prev.type === 'done' ? { ...prev, created: prev.created } : prev)
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-process-braindump`,
-        { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
-      )
-      const body = await res.json().catch(() => null)
-
-      setResult(prev => prev.type === 'done' ? {
-        ...prev,
-        created: [...prev.created, ...(body?.created ?? [])],
-        merged: [...prev.merged, ...(body?.merged ?? [])],
-      } : prev)
-      if (body?.pendingDeletions?.length) setDeleteCandidates(prev => [...prev, ...body.pendingDeletions])
-    } catch (err: any) {
-      console.error('[braindump] reprompt error:', err)
-    } finally {
-      setReprompting(false)
+    if (categories.includes('Notes')) {
+      await supabase.from('notes').insert({ content: full, user_id: user?.id, source_platform: 'web' })
+      if (!needsProcessing) {
+        setHistory(prev => [{
+          id: `note-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          categories,
+          transcript: full,
+          status: 'done',
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+          noteContent: full,
+        }, ...prev])
+      }
     }
+
+    setText('')
+    setSubmitting(false)
   }
 
   const fmtDuration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  const fmtWhen = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
   return (
     <div className="flex min-h-screen">
@@ -285,117 +320,21 @@ export default function BraindumpPage() {
         </form>
       </div>
 
-      {/* Right: results panel */}
-      <div className="w-1/2 p-8 overflow-y-auto min-w-0">
-        {result.type === 'idle' ? (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-700 text-sm">Results appear here after submit.</p>
-          </div>
-        ) : result.type === 'extracting' ? (
-          <div className="space-y-6">
-            <h3 className="text-lg font-bold text-white">Processing…</h3>
-            {result.categories.includes('Tasks') && (
-              <ResultSection
-                icon="◉"
-                label="Tasks"
-                color="indigo"
-                loading
-                items={[]}
-              />
-            )}
-            {result.categories.includes('Contacts') && (
-              <ResultSection
-                icon="●"
-                label="Contacts"
-                color="orange"
-                loading
-                items={[]}
-              />
-            )}
-            {result.categories.includes('Notes') && result.noteContent && (
-              <ResultSection
-                icon="📝"
-                label="Note saved"
-                color="green"
-                loading={false}
-                items={[]}
-                body={result.noteContent}
-              />
-            )}
-          </div>
-        ) : result.type === 'done' ? (
-          <div className="flex flex-col gap-6 h-full">
-            <div className="space-y-6 flex-1">
-              <h3 className="text-lg font-bold text-white">Done.</h3>
-
-              {result.categories.includes('Tasks') && (
-                <ResultSection
-                  icon="◉"
-                  label="Tasks extracted"
-                  color="indigo"
-                  loading={false}
-                  items={result.created}
-                  merged={result.merged}
-                  emptyMsg="No new tasks found."
-                  link={{ href: '/tasks', label: 'View tasks →' }}
-                />
-              )}
-
-              {result.categories.includes('Contacts') && (
-                <ResultSection
-                  icon="●"
-                  label="Contacts"
-                  color="orange"
-                  loading={false}
-                  items={[]}
-                  emptyMsg="Contact extraction runs in background."
-                  link={{ href: '/contacts', label: 'View contacts →' }}
-                />
-              )}
-
-              {result.categories.includes('Notes') && result.noteContent && (
-                <ResultSection
-                  icon="📝"
-                  label="Note saved"
-                  color="green"
-                  loading={false}
-                  items={[]}
-                  body={result.noteContent}
-                  link={{ href: '/notes', label: 'View notes →' }}
-                />
-              )}
-            </div>
-
-            {/* Reprompt box */}
-            {(result.categories.includes('Tasks') || result.categories.includes('Contacts')) && (
-              <form onSubmit={handleReprompt} className="mt-auto">
-                <p className="text-xs text-gray-600 mb-2 uppercase tracking-wider">Adjust output</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={reprompt}
-                    onChange={e => setReprompt(e.target.value)}
-                    placeholder="e.g. also add: email the client, remove the grocery task"
-                    disabled={reprompting}
-                    className="flex-1 px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500 text-sm disabled:opacity-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={reprompting || !reprompt.trim()}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-[#DEDAD2] text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    {reprompting ? '…' : 'Re-extract'}
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-xl p-4 bg-red-950/30 border border-red-900/50">
-            <p className="text-red-400 text-sm font-medium">Processing failed</p>
-            <p className="text-red-600 text-xs mt-1">{result.message}</p>
-          </div>
+      {/* Right: history feed */}
+      <div className="w-1/2 p-8 overflow-y-auto min-w-0 space-y-4">
+        <h3 className="text-lg font-bold text-white">History</h3>
+        {historyLoaded && history.length === 0 && (
+          <p className="text-gray-700 text-sm">Results appear here after submit.</p>
         )}
+        {history.map(entry => (
+          <HistoryCard
+            key={entry.id}
+            entry={entry}
+            debugOpen={openDebugId === entry.id}
+            onToggleDebug={() => setOpenDebugId(id => id === entry.id ? null : entry.id)}
+            onReprompt={instruction => handleReprompt(entry, instruction)}
+          />
+        ))}
       </div>
 
       {deleteCandidates.length > 0 && (
@@ -405,6 +344,114 @@ export default function BraindumpPage() {
           onConfirm={() => setDeleteCandidates([])}
         />
       )}
+    </div>
+  )
+}
+
+function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt }: {
+  entry: HistoryEntry
+  debugOpen: boolean
+  onToggleDebug: () => void
+  onReprompt: (instruction: string) => void
+}) {
+  const [reprompt, setReprompt] = useState('')
+  const [reprompting, setReprompting] = useState(false)
+  const fmtWhen = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900 overflow-hidden">
+      <div className="flex items-center justify-between px-4 pt-3">
+        <p className="text-[11px] text-gray-600">{fmtWhen(entry.createdAt)} · {entry.categories.join(' + ')}</p>
+        {entry.status === 'extracting' && <span className="text-xs text-gray-600 animate-pulse">extracting…</span>}
+        {entry.status === 'failed' && <span className="text-xs text-red-500">failed</span>}
+      </div>
+      <p className="px-4 pt-2 pb-3 text-sm text-gray-400 leading-relaxed line-clamp-3 whitespace-pre-wrap border-b border-gray-800">
+        {entry.transcript}
+      </p>
+
+      <div className="p-4 space-y-3">
+        {entry.categories.includes('Tasks') && (
+          <ResultSection
+            icon="◉" label="Tasks extracted" color="indigo"
+            loading={entry.status === 'extracting'}
+            items={entry.created} merged={entry.merged}
+            emptyMsg="No new tasks found."
+            link={{ href: '/tasks', label: 'View tasks →' }}
+          />
+        )}
+
+        {entry.categories.includes('Contacts') && (
+          <ResultSection
+            icon="●" label="Contacts" color="orange"
+            loading={entry.status === 'extracting'}
+            items={[
+              ...entry.contactsCreated,
+              ...entry.contactsUpdated.map(n => n + ' — updated'),
+              ...entry.interactionsLogged.map(i => (i.type === 'met' ? 'Met ' : 'Messaged ') + i.name + ' · ' + i.date),
+            ]}
+            emptyMsg="No contacts found."
+            link={{ href: '/contacts', label: 'View contacts →' }}
+          />
+        )}
+
+        {entry.categories.includes('Notes') && entry.noteContent && (
+          <ResultSection
+            icon="📝" label="Note saved" color="green"
+            loading={false} items={[]}
+            body={entry.noteContent}
+            link={{ href: '/notes', label: 'View notes →' }}
+          />
+        )}
+
+        {entry.errors.length > 0 && (
+          <div className="rounded-xl p-4 bg-red-950/30 border border-red-900/50">
+            <p className="text-red-400 text-xs font-medium uppercase tracking-wider mb-2">⚠ Errors</p>
+            {entry.errors.map((e, i) => <p key={i} className="text-red-500 text-xs font-mono mb-1">{e}</p>)}
+          </div>
+        )}
+
+        {(entry.logs.length > 0 || entry.errors.length > 0) && (
+          <div className="rounded-xl border border-gray-800 bg-gray-950">
+            <button
+              type="button"
+              onClick={onToggleDebug}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 uppercase tracking-wider hover:text-gray-400"
+            >
+              <span>🔍 Debug reasoning ({entry.logs.length})</span>
+              <span>{debugOpen ? '▲' : '▼'}</span>
+            </button>
+            {debugOpen && (
+              <div className="px-4 pb-4 space-y-1 max-h-80 overflow-y-auto">
+                {entry.logs.map((line, i) => (
+                  <p key={i} className="text-[11px] font-mono text-gray-500 leading-relaxed whitespace-pre-wrap break-words">{line}</p>
+                ))}
+                {entry.logs.length === 0 && <p className="text-xs text-gray-700">No trace returned.</p>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {entry.status !== 'extracting' && (entry.categories.includes('Tasks') || entry.categories.includes('Contacts')) && (
+          <div className="flex gap-2 pt-1">
+            <input
+              type="text"
+              value={reprompt}
+              onChange={e => setReprompt(e.target.value)}
+              placeholder="Adjust: also add… / remove…"
+              disabled={reprompting}
+              className="flex-1 px-3 py-2 bg-gray-950 border border-gray-800 rounded-lg text-gray-200 placeholder-gray-600 outline-none focus:border-indigo-500 text-xs disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={async () => { if (!reprompt.trim()) return; setReprompting(true); await onReprompt(reprompt); setReprompt(''); setReprompting(false) }}
+              disabled={reprompting || !reprompt.trim()}
+              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-[#DEDAD2] text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+            >
+              {reprompting ? '…' : 'Re-extract'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
