@@ -15,7 +15,17 @@ const CONTACT_TIERS: { value: ContactTier; label: string; sub: string }[] = [
 export default function NewContactPage() {
   const router = useRouter()
   const [name, setName] = useState('')
+  const [title, setTitle] = useState('')
+  const [education, setEducation] = useState('')
+  const [location, setLocation] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [linkedin, setLinkedin] = useState('')
   const [howWeMet, setHowWeMet] = useState('')
+  const [whyGoodContact, setWhyGoodContact] = useState('')
+  const [lessUsefulFor, setLessUsefulFor] = useState('')
+  const [rating, setRating] = useState('')
+  const [nextStep, setNextStep] = useState('')
   const [tier, setTier] = useState<ContactTier>('weekly')
   const [saving, setSaving] = useState(false)
 
@@ -28,7 +38,17 @@ export default function NewContactPage() {
       .from('contacts')
       .insert({
         name: name.trim(),
+        title: title.trim() || null,
+        education: education.trim() || null,
+        location: location.trim() || null,
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        linkedin: linkedin.trim() || null,
         how_we_met: howWeMet.trim() || null,
+        why_good_contact: whyGoodContact.trim() || null,
+        less_useful_for: lessUsefulFor.trim() || null,
+        rating: rating.trim() || null,
+        next_step: nextStep.trim() || null,
         relationship_tier: 'friend',
         contact_tier: tier,
         user_id: user?.id,
@@ -64,6 +84,39 @@ export default function NewContactPage() {
           />
         </div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Title</label>
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Role, company"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Education</label>
+            <input type="text" value={education} onChange={e => setEducation(e.target.value)} placeholder="School, degree"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Location</label>
+            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="City, state"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Email</label>
+            <input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Phone</label>
+            <input type="text" value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone number"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">LinkedIn</label>
+            <input type="text" value={linkedin} onChange={e => setLinkedin(e.target.value)} placeholder="URL or status"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+
         <div>
           <label className="block text-sm text-gray-400 mb-1.5">How we met</label>
           <input
@@ -73,6 +126,33 @@ export default function NewContactPage() {
             placeholder="College, work, conference…"
             className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-1.5">Why they're a good contact</label>
+          <textarea value={whyGoodContact} onChange={e => setWhyGoodContact(e.target.value)} rows={3}
+            placeholder="Relevant background, shared interests, generous with time…"
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500 resize-none" />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-1.5">Less useful for</label>
+          <input type="text" value={lessUsefulFor} onChange={e => setLessUsefulFor(e.target.value)}
+            placeholder="Where their expertise doesn't apply"
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Rating / debrief</label>
+            <input type="text" value={rating} onChange={e => setRating(e.target.value)} placeholder="How the meeting went"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1.5">Next step</label>
+            <input type="text" value={nextStep} onChange={e => setNextStep(e.target.value)} placeholder="Follow-up plan"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
         </div>
 
         <div>

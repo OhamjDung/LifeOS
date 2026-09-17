@@ -38,7 +38,7 @@ export async function updateSession(request: NextRequest) {
   // Redirect logged-in users away from login
   if (user && request.nextUrl.pathname === '/login') {
     const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
+    url.pathname = '/tasks'
     return NextResponse.redirect(url)
   }
 

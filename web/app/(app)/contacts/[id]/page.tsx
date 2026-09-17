@@ -67,7 +67,54 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
         </p>
       </div>
 
+      <ContactProfile contact={contact} />
+
       <ContactDetail contact={contact} events={events} eventLabels={EVENT_LABELS} />
+    </div>
+  )
+}
+
+function ContactProfile({ contact }: { contact: Contact }) {
+  const facts: [string, string | null][] = [
+    ['Title', contact.title],
+    ['Education', contact.education],
+    ['Location', contact.location],
+    ['Email', contact.email],
+    ['Phone', contact.phone],
+    ['LinkedIn', contact.linkedin],
+  ].filter(([, v]) => v) as [string, string][]
+
+  const longFields: [string, string | null][] = [
+    ['Why a good contact', contact.why_good_contact],
+    ['Less useful for', contact.less_useful_for],
+    ['Rating / debrief', contact.rating],
+    ['Next step', contact.next_step],
+  ].filter(([, v]) => v) as [string, string][]
+
+  if (facts.length === 0 && longFields.length === 0) return null
+
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900 p-5 mb-6 space-y-4">
+      {facts.length > 0 && (
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+          {facts.map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs text-gray-600 uppercase tracking-wider mb-0.5">{label}</p>
+              <p className="text-sm text-gray-300">{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {longFields.length > 0 && (
+        <div className={`space-y-3 ${facts.length > 0 ? 'pt-3 border-t border-gray-800' : ''}`}>
+          {longFields.map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs text-gray-600 uppercase tracking-wider mb-1">{label}</p>
+              <p className="text-sm text-gray-400 whitespace-pre-wrap leading-relaxed">{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
