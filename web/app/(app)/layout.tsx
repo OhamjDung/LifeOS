@@ -10,9 +10,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) redirect('/login')
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex flex-col sm:flex-row min-h-screen">
       <NavBar />
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto">
         {children}
       </main>
       <QuickNotesWidget />

@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Personal
 
@@ -97,8 +97,6 @@ const openai = new OpenAI({
 
 Embeddings use Jina AI directly (`https://api.jina.ai/v1/embeddings`, model `jina-embeddings-v3`) via `JINA_API_KEY` — not DeepSeek, no embeddings model there.
 
-**Jina = 1024 dimensions. `note_chunks.embedding` is `vector(1024)` (migrations_v11.sql).** It was `vector(1536)` from the old `text-embedding-3-small` days and nobody noticed for months because the chunk insert never checked its error — every note since the Jina switch was marked `done` with zero chunks and semantic search silently returned nothing for them. `schema.sql` still says 1536 for fresh installs; v11 is the truth. Jina's free tier also 429s on ~10 concurrent calls, which is why `fn-embed-note` processes notes sequentially, not `Promise.all`.
-
 Model in use for all chat calls: `deepseek-v4-flash` (task extraction, note categorization, CRM drafts, auto-tag, task grouping) — cheap/fast tier, not `-pro`.
 
 | Function | Uses |
@@ -140,7 +138,7 @@ Three-layer progressive enhancement — lower layers work without higher ones:
 
 Braindump flow: web/mobile saves `raw_transcript` to `braindump_jobs` immediately → `fn-process-braindump` polls every 2 min via pg_cron → extracts tasks with DeepSeek + Jina cosine dedup → tasks appear via Realtime.
 
-Note embedding: save note → `fn-embed-note` polls every 2 min (web also nudges it right after a save) → chunks + embeds → category/tags update via Realtime on `notes.processing_status`. `NoteEditor` autosaves 1s after typing stops with a compare-and-set on the previous content (conflict → error banner, draft kept in localStorage), and has a manual Category select that sets `category_locked` so background processing never overwrites it.
+Note embedding: save note → `fn-embed-note` polls every 2 min → chunks + embeds → category/tags update via Realtime on `notes.processing_status`.
 
 ## Task Domain Details
 
@@ -213,10 +211,10 @@ web/components/
   SessionTaskPanel.tsx           # /session/[id]: link/create/complete/unlink tasks, check off subtasks
   EndSessionModal.tsx            # keep/discard session-created tasks, then ends session
   LockinRatingModal.tsx          # 1–5 rating after each work round → session_rounds
-  QuickNotesWidget.tsx           # global bottom-right tabbed scratchpad → notes table (localStorage drafts). Opens on hover AND click-toggle (hover was removed once by another agent — user wants it, keep it)
+  QuickNotesWidget.tsx           # global bottom-right tabbed scratchpad → notes table (localStorage drafts)
   NotesFilter.tsx                # client component: live filter notes by title/content/tag
-  NoteEditor.tsx                 # autosave (1s debounce, CAS on prior content), localStorage draft, manual category lock, Realtime metadata, Cmd/Ctrl+S
-  NotesPendingChecker.tsx        # shows "N queued" + fire-and-forget nudge to fn-embed-note
+  NoteEditor.tsx                 # edit/delete note (client)
+  NotesPendingChecker.tsx        # triggers fn-embed-note when pending notes detected
   ContactDetail.tsx              # log events + AI draft message button (client)
   LogContactButton.tsx           # quick "log interaction" button for a contact
   LogoutButton.tsx
@@ -269,7 +267,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | Function | Trigger | Does |
 |---|---|---|
 | `fn-process-braindump` | pg_cron every 2 min | DeepSeek extracts tasks (+ contacts when category checked), infers due dates, cosine dedup (0.85/0.65 thresholds) |
-| `fn-embed-note` | pg_cron every 2 min (+ fire-and-forget nudge from `/notes/new` and `NotesPendingChecker`) | Fixed-window chunks (`_shared/noteText.ts`, 1200 chars / 200 overlap) → Jina embeddings → semantic search for top-5 similar notes → DeepSeek category+tags (uses ±2h temporal context + semantic context + existing tags library). Claims a note by `updated_at` (CAS), commits chunks+category atomically via `finish_note_processing()` RPC, skips the AI call when `notes.category_locked`. Reclaims notes stuck in `processing` >10 min. Processes sequentially (Jina 429s). |
+| `fn-embed-note` | pg_cron every 2 min | Paragraph chunks → Jina embeddings → semantic search for top-5 similar notes → DeepSeek category+tags (uses ±2h temporal context + semantic context + existing tags library). Also recovers notes stuck in `processing_status='processing'` |
 | `fn-search-notes` | HTTP POST from client | Embeds query → calls `search_notes()` DB function |
 | `fn-draft-catchup` | HTTP POST from client | DeepSeek drafts catch-up message for a contact |
 | `fn-auto-tag` | HTTP POST from client | DeepSeek picks best tag from user's tag list for a task |
@@ -278,22 +276,13 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | `fn-widget-data` | HTTP GET from iOS widget | Returns today's tasks for a `widget_id` (no JWT — uses `widget_registrations` table) |
 | `fn-widget-action` | HTTP POST from iOS widget | Complete or rollover a task; auth via `widget_id` credential |
 
-`fn-search-notes`, `fn-draft-catchup`, `fn-auto-tag`, `fn-group-tasks`, and `fn-transcribe` verify the user JWT from `Authorization` header before executing (`fn-group-tasks` also validates/dedupes the task list and clamps the model output via `_shared/taskGrouping.ts`).
-
-**Queue functions (`fn-embed-note`, `fn-process-braindump`) auth contract** — `_shared/auth.ts` `resolveCaller()`: service caller → drains everyone's queue; signed-in user → drains only their own rows. A caller is "service" if the token equals env `SUPABASE_SERVICE_ROLE_KEY` **or** is a gateway-verified JWT with `role: service_role` (the functions gateway has `verify_jwt: true`, so the signature is already checked). The second branch is required: the pg_cron jobs send the legacy service-role JWT and env `SUPABASE_SERVICE_ROLE_KEY` is a different string, so plain equality 401'd every cron tick for 14 minutes on 2026-09-17 (06:46–07:00) and nothing processed. Anon key is no longer accepted — `curl` with the anon key gets 401; use the service JWT from `select command from cron.job` or a real user session token.
-
-**`supabase/functions/_shared/`** — first shared modules across edge fns (`auth.ts`, `noteText.ts`, `taskGrouping.ts`). `supabase functions deploy <fn>` bundles them automatically (confirmed in `get_edge_function` output). Pure helpers (`noteText`, `taskGrouping`) are unit-tested in `tests/`.
-
-**Tests** (no framework; run from repo root):
-- `node --test tests/ai-regressions.test.mjs` — transpiles the `_shared/*.ts` helpers + `web/lib/sessionTimer.ts` with the web app's TypeScript and asserts on chunking, group normalization, timer resume.
-- `tests/note-indexing.sql` — paste into SQL Editor / `execute_sql`; `begin … rollback` so it leaves nothing behind; asserts `finish_note_processing` rejects stale claims + bad vectors, keeps `category_locked`, and is not executable by `authenticated`.
+`fn-search-notes`, `fn-draft-catchup`, `fn-auto-tag`, and `fn-transcribe` verify the user JWT from `Authorization` header before executing.
 `fn-widget-data` and `fn-widget-action` use `widget_registrations.widget_id` as the auth credential (no JWT — widget can't store tokens).
 
 ## Database Key Patterns
 
 - All tables use RLS (`auth.uid() = user_id`). Always pass `user_id: user?.id` explicitly on inserts (no server-side default).
-- `braindump_jobs` and `notes`: Edge Functions set `processing_status='processing'` before AI call, `done/failed` after. `retry_count` max 3 enforced in query (`lt('retry_count', 3)`). Both claim rows with a conditional update (`.eq('processing_status','pending')` / `.eq('updated_at', seen)`) so two workers can't process the same row.
-- `notes.category_locked` (v10) + `finish_note_processing(p_note_id, p_claim_time, p_chunks, p_category, p_tags)` (v10, **service_role only**, revoked from anon/authenticated): atomically replaces `note_chunks` and sets category/tags/`done`, but only if the note's `updated_at` still equals the claim time — an edit during processing makes the old worker's result a no-op (returns false). `notes.last_error` (v11) holds the last failure string; on failure `retry_count` increments and status goes back to `pending` (or `failed` at 3).
+- `braindump_jobs` and `notes`: Edge Functions set `processing_status='processing'` before AI call, `done/failed` after. `retry_count` max 3 enforced in query (`lt('retry_count', 3)`).
 - `braindump_jobs.categories`: TEXT[] column (added in migrations_v3.sql), e.g. `['Tasks', 'Contacts']`. Controls what `fn-process-braindump` extracts — gates whether the `submit_contacts` tool is offered to the model at all.
 - `tasks.rollover_count`: incremented by `trg_increment_rollover_count` trigger on `task_rollovers` insert. Backfilled from existing rows via `migrations.sql`.
 - `tasks.contact_id`: optional FK to contacts. `trg_event_task_contact` trigger updates `contacts.last_contacted_at` when event task marked done.
@@ -347,11 +336,11 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | 21 — Persisted task groups + infinite subtasks | ✅ Done — `task_groups` table, `group_id`, `parent_subtask_id`, drag between groups |
 | 22 — Quick notes widget | ✅ Done — global bottom-right tabbed scratchpad, hover open/close, localStorage drafts |
 
-**Migrations applied**: `migrations_v3.sql` through `migrations_v11.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed). All `.sql` files are committed.
+**Migrations applied**: `migrations_v3.sql` through `migrations_v9.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks). `migrations_v5.sql` and `migrations_v6.sql` are still untracked in git — commit them when convenient, no rush since the DB already has the changes.
 
 ## What's Working Right Now (Sep 2026)
 
-**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / SESSION / DUMP / NOTES / PEOPLE (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
+**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / SESSION / DUMP / NOTES / PEOPLE (post-login lands on `/tasks`, not a dashboard):
 - `/tasks` — 50/50 split: task list (drag reorder, drag between groups, Keep in Touch section, priority mode, persisted AI groups, nested subtasks) + embedded calendar / task detail pane
 - `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings)
 - `/braindump` — 50/50 split: form (text + mic → MediaRecorder blob → fn-transcribe/Groq Whisper) + persisted history feed (cards per dump, survives reload, per-card debug panel + reprompt)

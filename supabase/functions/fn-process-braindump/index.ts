@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { resolveCaller } from '../_shared/auth.ts'
 import OpenAI from 'npm:openai'
 
 const supabase = createClient(
@@ -163,10 +164,12 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
   const outcome: Outcome = { created: [], merged: [], duplicates: [], pendingDeletions: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], contactReport: [], log }
 
   try {
-    await supabase
+    const { data: claimed, error: claimError } = await supabase
       .from('braindump_jobs')
       .update({ processing_status: 'processing' })
-      .eq('id', job.id)
+      .eq('id', job.id).eq('processing_status', 'pending').select('id').maybeSingle()
+    if (claimError) throw claimError
+    if (!claimed) return outcome
 
     const today = new Date().toISOString().split('T')[0]
     const wantsContacts = categories.includes('Contacts')
@@ -464,13 +467,21 @@ const cors = {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors })
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: cors })
+  // pg_cron (service key) drains everyone's queue; a signed-in user only drains their own.
+  const caller = await resolveCaller(req, supabase)
+  if (!caller) return new Response('Unauthorized', { status: 401, headers: cors })
+  const userId = caller.kind === 'user' ? caller.userId : null
 
-  const { data: jobs } = await supabase
+  let query = supabase
     .from('braindump_jobs')
     .select('id, user_id, raw_transcript, categories')
     .eq('processing_status', 'pending')
     .lt('retry_count', 3)
     .limit(10)
+  if (userId) query = query.eq('user_id', userId)
+  const { data: jobs, error: queryError } = await query
+  if (queryError) return new Response('Unable to load queue', { status: 500, headers: cors })
 
   if (!jobs?.length) return new Response(JSON.stringify({ processed: 0 }), {
     status: 200, headers: { ...cors, 'Content-Type': 'application/json' },

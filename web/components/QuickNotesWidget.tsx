@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 interface Draft {
@@ -26,13 +26,18 @@ export function QuickNotesWidget() {
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [activeId, setActiveId] = useState<string>('')
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const saveLock = useRef(false)
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    const loaded = loadDrafts()
-    setDrafts(loaded)
-    setActiveId(loaded[0].id)
-    setHydrated(true)
+    const timer = window.setTimeout(() => {
+      const loaded = loadDrafts()
+      setDrafts(loaded)
+      setActiveId(loaded[0].id)
+      setHydrated(true)
+    }, 0)
+    return () => clearTimeout(timer)
   }, [])
 
   useEffect(() => {
@@ -66,16 +71,24 @@ export function QuickNotesWidget() {
   }
 
   async function saveActive() {
-    if (!active || !active.text.trim()) return
+    if (!active || !active.text.trim() || saveLock.current) return
+    saveLock.current = true
+    setError('')
     setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('notes').insert({
-      user_id: user?.id,
-      content: active.text.trim(),
-      source_platform: 'web',
-    })
-    setSaving(false)
-    if (!error) closeTab(active.id)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Please sign in again')
+      const { error: failure } = await supabase.from('notes').insert({
+        user_id: user.id, content: active.text.trim(), source_platform: 'web',
+      })
+      if (failure) throw failure
+      closeTab(active.id)
+    } catch {
+      setError('Could not save. Your draft is still here; please retry.')
+    } finally {
+      saveLock.current = false
+      setSaving(false)
+    }
   }
 
   if (!hydrated) return null
@@ -84,11 +97,11 @@ export function QuickNotesWidget() {
     <div
       className="fixed bottom-0 right-4 z-50 flex flex-col items-end"
       onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={() => { if (!saving) setOpen(false) }}
     >
       {open && (
         <div
-          className="mb-2 w-80 rounded-t-xl border border-gray-700 bg-gray-900 shadow-2xl flex flex-col"
+          className="mb-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-gray-700 bg-gray-900 shadow-2xl flex flex-col"
           style={{ height: 320 }}
         >
           {/* Chrome-style tab strip */}
@@ -96,6 +109,7 @@ export function QuickNotesWidget() {
             {drafts.map((d, i) => (
               <button
                 key={d.id}
+                disabled={saving}
                 onClick={() => setActiveId(d.id)}
                 className={`group flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-t-lg whitespace-nowrap transition-colors ${
                   d.id === activeId
@@ -105,7 +119,7 @@ export function QuickNotesWidget() {
               >
                 <span className="max-w-[80px] truncate">{d.text.trim() || `Note ${i + 1}`}</span>
                 <span
-                  onClick={e => { e.stopPropagation(); closeTab(d.id) }}
+                  onClick={e => { e.stopPropagation(); if (!saving && (!d.text.trim() || confirm('Discard this draft?'))) closeTab(d.id) }}
                   className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
                 >
                   ✕
@@ -113,6 +127,7 @@ export function QuickNotesWidget() {
               </button>
             ))}
             <button
+              disabled={saving}
               onClick={newTab}
               title="New draft"
               className="px-2 py-1 text-xs text-gray-500 hover:text-indigo-300"
@@ -132,11 +147,14 @@ export function QuickNotesWidget() {
           <textarea
             value={active?.text ?? ''}
             onChange={e => updateActiveText(e.target.value)}
+            aria-label="Quick note draft"
+            disabled={saving}
             autoFocus
             placeholder="Jot something down..."
-            className="flex-1 w-full resize-none bg-gray-950 text-gray-100 text-sm p-3 outline-none"
+            className="flex-1 w-full resize-none bg-gray-950 text-gray-200 text-sm p-3 outline-none"
           />
 
+          {error && <p role="alert" className="px-3 text-xs text-red-700">{error}</p>}
           <div className="flex justify-end p-2 border-t border-gray-800 shrink-0">
             <button
               onClick={saveActive}
@@ -153,6 +171,8 @@ export function QuickNotesWidget() {
       <button
         onClick={() => setOpen(v => !v)}
         title="Quick notes"
+        aria-label="Toggle quick notes"
+        aria-expanded={open}
         className="mb-4 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[#DEDAD2] text-xs font-medium shadow-lg transition-all hover:pr-4"
       >
         📝{open ? '' : drafts.some(d => d.text.trim()) ? ` ${drafts.filter(d => d.text.trim()).length}` : ''}

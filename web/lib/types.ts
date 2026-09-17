@@ -186,6 +186,7 @@ export interface Note {
   title: string | null
   content: string
   category: string | null
+  category_locked?: boolean
   tags: string[]
   source_platform: 'web' | 'ios' | 'import'
   processing_status: ProcessingStatus

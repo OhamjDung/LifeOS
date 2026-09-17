@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 
@@ -17,19 +17,25 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const supabase = createClient()
+  const lock = useRef(false)
+  const [error, setError] = useState('')
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
-    if (!query.trim()) return
+    if (!query.trim() || lock.current) return
+    lock.current = true
+    setError('')
     setLoading(true)
     setSearched(true)
 
+    try {
     const { data: { session } } = await supabase.auth.getSession()
 
     const res = await fetch(
       `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-search-notes`,
       {
         method: 'POST',
+        signal: AbortSignal.timeout(30000),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session?.access_token}`,
@@ -38,9 +44,11 @@ export default function SearchPage() {
       }
     )
 
+    if (!res.ok) throw new Error('Search failed')
     const { results: data } = await res.json()
     setResults(data ?? [])
-    setLoading(false)
+    } catch { setError('Search is unavailable. Please try again.'); setResults([]) }
+    finally { lock.current = false; setLoading(false) }
   }
 
   return (
@@ -52,12 +60,13 @@ export default function SearchPage() {
 
       <form onSubmit={handleSearch} className="flex gap-2 mb-8">
         <input
-          type="text"
+          aria-label="Search notes"
+          type="search"
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="What do you know about…"
           autoFocus
-          className="flex-1 px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+          className="min-w-0 flex-1 px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
         />
         <button
           type="submit"
@@ -68,7 +77,8 @@ export default function SearchPage() {
         </button>
       </form>
 
-      {searched && !loading && results.length === 0 && (
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {searched && !error && !loading && results.length === 0 && (
         <p className="text-gray-500 text-sm">No relevant notes found. Try different words.</p>
       )}
 

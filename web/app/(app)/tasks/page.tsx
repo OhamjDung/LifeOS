@@ -95,10 +95,10 @@ export default async function TasksPage({
 
   return (
     <TaskSelectionProvider>
-    <div className="flex h-screen">
+    <div className="flex flex-col lg:flex-row lg:h-screen">
       {/* Left: Task list */}
       <div
-        className="w-1/2 shrink-0 p-6 overflow-y-auto"
+        className="w-full lg:w-1/2 shrink-0 p-6 overflow-y-auto"
         style={{ borderRight: '1px solid rgba(28,26,20,0.1)' }}
       >
         <div className="mb-5">
@@ -115,7 +115,7 @@ export default async function TasksPage({
       </div>
 
       {/* Right: Calendar / Task detail */}
-      <div className="w-1/2 p-6 overflow-y-auto min-w-0">
+      <div className="w-full lg:w-1/2 p-6 overflow-y-auto min-w-0">
       <TaskDetailPane>
         <div className="flex items-center justify-between mb-5">
           <div>

@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: 'IBM Plex Mono', monospace;
-  --font-mono: 'IBM Plex Mono', monospace;
+  --font-sans: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+  --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
 
   /* Analog warm gray palette */
   --color-gray-950: #CCCAC0;
   --color-gray-900: #DEDAD2;
   --color-gray-800: #C4C1B7;
   --color-gray-700: #B5B2A8;
-  --color-gray-600: #9E9890;
-  --color-gray-500: #837C6F;
+  --color-gray-600: #7D766B;
+  --color-gray-500: #716A5F;
   --color-gray-400: #6B6358;
   --color-gray-300: #5A5448;
   --color-gray-200: #3A3430;
@@ -30,5 +30,25 @@
 body {
   background-color: #CCCAC0;
   color: #1C1A14;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+}
+
+:root { color-scheme: light; }
+body { margin: 0; -webkit-font-smoothing: antialiased; }
+:where(button, a, input, textarea, select):focus-visible { outline: 2px solid #516439; outline-offset: 3px; }
+button:disabled { cursor: not-allowed; }
+::selection { background: #CDDBA6; color: #1C1A14; }
+.editor-surface {
+  padding: clamp(16px, 3vw, 28px); border-radius: 20px;
+  background: rgba(245,243,236,.58); border: 1px solid rgba(255,255,255,.6);
+  box-shadow: 0 8px 30px rgba(52,48,39,.06);
+}
+.app-nav { position: sticky; top: 0; z-index: 30; }
+@media (min-width: 640px) { .app-nav { height: 100dvh; } }
+@media (max-width: 639px) {
+  input, textarea, select { font-size: 16px; }
+  button { min-height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

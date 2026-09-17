@@ -24,8 +24,8 @@ export function NavBar() {
   }
 
   return (
-    <nav
-      className="w-[72px] shrink-0 flex flex-col items-center py-5 gap-0.5"
+    <nav aria-label="Main navigation"
+      className="app-nav w-full sm:w-[72px] shrink-0 flex flex-row sm:flex-col items-center p-1 sm:py-5 gap-0.5"
       style={{
         background: 'linear-gradient(to bottom, #CCCAC0, #BAB8AE)',
         borderRight: '1px solid rgba(255,255,255,0.6)',
@@ -38,6 +38,7 @@ export function NavBar() {
           <Link
             key={href}
             href={href}
+            aria-current={active ? 'page' : undefined}
             className="flex flex-col items-center gap-0.5 w-full py-3 px-1 rounded-lg transition-all"
             style={{
               color: active ? '#516439' : '#837C6F',
@@ -57,7 +58,7 @@ export function NavBar() {
         )
       })}
 
-      <div className="mt-auto w-full px-2">
+      <div className="sm:mt-auto w-auto sm:w-full px-2">
         <button
           onClick={logout}
           className="w-full flex flex-col items-center gap-0.5 py-3 rounded-lg transition-all"

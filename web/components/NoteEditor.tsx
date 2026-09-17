@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Note } from '@/lib/types'
@@ -10,126 +10,151 @@ export function NoteEditor({ note }: { note: Note }) {
   const supabase = createClient()
   const [title, setTitle] = useState(note.title ?? '')
   const [content, setContent] = useState(note.content)
+  const [saved, setSaved] = useState({ title: note.title ?? '', content: note.content })
+  const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [liveStatus, setLiveStatus] = useState(note.processing_status)
-  const [liveCategory, setLiveCategory] = useState(note.category)
-  const [liveTags, setLiveTags] = useState(note.tags ?? [])
-  const dirty = title !== (note.title ?? '') || content !== note.content
+  const [error, setError] = useState('')
+  const [metadata, setMetadata] = useState(note)
+  const busy = useRef(false)
+  const removing = useRef(false)
+  const storageKey = `note-draft:${note.user_id}:${note.id}`
+  const dirty = title !== saved.title || content !== saved.content
 
   useEffect(() => {
-    // Always trigger on load — fn-embed-note processes ALL pending notes, returns fast if none
-    supabase.auth.getSession().then(({ data: { session } }) => triggerEmbed(session))
+    const timer = window.setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(storageKey)
+        const draft = raw ? JSON.parse(raw) : null
+        if (draft && typeof draft.title === 'string' && typeof draft.content === 'string') {
+          setTitle(draft.title)
+          setContent(draft.content)
+        }
+      } catch { /* Browser storage is optional. */ }
+      setReady(true)
+    }, 0)
+    const channel = supabase.channel(`note-${note.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notes', filter: `id=eq.${note.id}` }, payload => {
+        // Background metadata must never replace text or move the cursor.
+        setMetadata(payload.new as Note)
+      }).subscribe()
+    return () => { clearTimeout(timer); void supabase.removeChannel(channel) }
+  }, [note.id, storageKey, supabase])
 
-    const channel = supabase
-      .channel(`note-${note.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'notes',
-        filter: `id=eq.${note.id}`,
-      }, (payload) => {
-        const n = payload.new as any
-        console.log('[note] realtime update:', n.processing_status, 'category:', n.category, 'tags:', n.tags)
-        setLiveStatus(n.processing_status)
-        if (n.category) setLiveCategory(n.category)
-        if (n.tags) setLiveTags(n.tags)
-      })
-      .subscribe()
+  const save = useCallback(async () => {
+    if (!ready || busy.current || removing.current || !dirty || !content.trim()) return
+    busy.current = true
+    setSaving(true)
+    setError('')
+    const snapshot = { title, content }
+    try {
+      let mutation = supabase.from('notes').update({
+        title: title.trim() || null, content,
+        processing_status: 'pending', retry_count: 0,
+        updated_at: new Date().toISOString(),
+      }).eq('id', note.id).eq('content', saved.content)
+      mutation = saved.title.trim() ? mutation.eq('title', saved.title.trim()) : mutation.is('title', null)
+      const { data, error: failure } = await mutation.select('id').single()
+      if (failure || !data) throw failure ?? new Error('Save failed')
+      setSaved(snapshot)
+      setMetadata(previous => ({ ...previous, processing_status: 'pending' }))
+    } catch {
+      setError('Could not save, or this note changed elsewhere. Reload to review conflicts before retrying; your draft is retained on this device when storage is available.')
+    } finally {
+      busy.current = false
+      setSaving(false)
+    }
+  }, [ready, content, dirty, note.id, saved, supabase, title])
 
-    return () => { supabase.removeChannel(channel) }
-  }, [note.id])
+  useEffect(() => {
+    if (!ready) return
+    try {
+      if (dirty) localStorage.setItem(storageKey, JSON.stringify({ title, content }))
+      else localStorage.removeItem(storageKey)
+    } catch { /* Database save still works when storage is full. */ }
+    if (!dirty || saving || error || deleting) return
+    const timer = window.setTimeout(() => { void save() }, 1000)
+    return () => clearTimeout(timer)
+  }, [title, content, dirty, ready, storageKey, saving, error, deleting, save])
 
-  async function triggerEmbed(session: any) {
-    console.log('[note] triggering fn-embed-note...')
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-embed-note`,
-      { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
-    ).catch((e) => { console.error('[note] fn-embed-note error:', e); return null })
-    if (res) {
-      const body = await res.json().catch(() => null)
-      console.log('[note] fn-embed-note response:', res.status, body)
+  useEffect(() => {
+    function warn(event: BeforeUnloadEvent) {
+      if (dirty) { event.preventDefault(); event.returnValue = '' }
+    }
+    function retry() { if (dirty) void save() }
+    window.addEventListener('beforeunload', warn)
+    window.addEventListener('online', retry)
+    return () => {
+      window.removeEventListener('beforeunload', warn)
+      window.removeEventListener('online', retry)
+    }
+  }, [dirty, save])
+
+  async function changeCategory(category: string) {
+    if (busy.current || removing.current) return
+    busy.current = true
+    setSaving(true)
+    setError('')
+    try {
+      const patch = category ? { category, category_locked: true } : { category_locked: false, processing_status: 'pending', retry_count: 0 }
+      const { data, error: failure } = await supabase.from('notes').update({ ...patch, updated_at: new Date().toISOString() })
+        .eq('id', note.id).select('*').single()
+      if (failure || !data) throw failure ?? new Error('Update failed')
+      setMetadata(data as Note)
+    } catch { setError('Could not update category. Please try again.') }
+    finally { busy.current = false; setSaving(false) }
+  }
+
+  async function remove() {
+    if (busy.current || removing.current || !confirm('Delete this note?')) return
+    removing.current = true
+    setDeleting(true)
+    try {
+      const { data, error: failure } = await supabase.from('notes').delete().eq('id', note.id).select('id').single()
+      if (failure || !data) throw failure ?? new Error('Delete failed')
+      try { localStorage.removeItem(storageKey) } catch { /* optional storage */ }
+      router.push('/notes')
+      router.refresh()
+    } catch {
+      setError('Could not delete this note. Please try again.')
+      removing.current = false
+      setDeleting(false)
     }
   }
 
-  async function handleSave() {
-    if (!content.trim()) return
-    setSaving(true)
-    setLiveStatus('pending')
-    await supabase
-      .from('notes')
-      .update({
-        title: title.trim() || null,
-        content: content.trim(),
-        processing_status: 'pending',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', note.id)
-    console.log('[note] saved, waiting for categorization...')
-    setSaving(false)
-
-    const { data: { session } } = await supabase.auth.getSession()
-    await triggerEmbed(session)
-  }
-
-  async function handleDelete() {
-    if (!confirm('Delete this note?')) return
-    setDeleting(true)
-    await supabase.from('notes').delete().eq('id', note.id)
-    router.push('/notes')
-  }
-
-  const isPending = liveStatus === 'pending' || liveStatus === 'processing'
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleSave}
-            disabled={saving || !dirty}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-[#DEDAD2] text-sm rounded-lg transition-colors"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          {isPending && (
-            <span className="text-xs text-gray-500 animate-pulse">⟳ Categorizing…</span>
-          )}
-          {liveCategory && !isPending && (
-            <span className="px-2 py-0.5 bg-indigo-900/50 text-indigo-300 text-xs rounded-md">{liveCategory}</span>
-          )}
-        </div>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="text-red-500 hover:text-red-400 text-sm disabled:opacity-40"
-        >
-          {deleting ? 'Deleting…' : 'Delete'}
-        </button>
-      </div>
-
-      {liveTags.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap mb-4">
-          {liveTags.map(tag => (
-            <span key={tag} className="px-2 py-0.5 bg-gray-800 text-gray-400 text-xs rounded">{tag}</span>
-          ))}
-        </div>
-      )}
-
-      <input
-        type="text"
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        placeholder="Title (optional)"
-        className="w-full bg-transparent text-2xl font-bold text-white placeholder-gray-600 outline-none mb-4"
-      />
-
-      <textarea
-        value={content}
-        onChange={e => setContent(e.target.value)}
-        rows={24}
-        className="w-full bg-transparent text-gray-300 placeholder-gray-600 outline-none resize-none text-base leading-relaxed"
-      />
+  return <div className="editor-surface" onKeyDown={event => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); void save() }
+  }}>
+    {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
+    <div className="mb-5 flex flex-wrap items-center gap-3">
+      <button onClick={() => void save()} disabled={!ready || saving || deleting || !dirty || !content.trim()}
+        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-[#DEDAD2] disabled:opacity-50">
+        {saving ? 'Saving…' : error ? 'Retry save' : dirty ? 'Save now' : 'Saved'}
+      </button>
+      <span role="status" className="text-xs text-gray-400">
+        {metadata.processing_status === 'failed' ? 'Categorization unavailable; your note is safe.' :
+          ['pending', 'processing'].includes(metadata.processing_status) ? 'Categorization queued' : metadata.category}
+      </span>
+      <button onClick={() => void remove()} disabled={deleting || saving} className="ml-auto text-sm text-red-700 disabled:opacity-50">
+        {deleting ? 'Deleting…' : 'Delete'}
+      </button>
     </div>
-  )
+    <label className="mb-4 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+      Category
+      <select aria-label="Note category" disabled={saving || deleting}
+        value={metadata.category_locked ? metadata.category ?? '' : ''}
+        onChange={event => void changeCategory(event.target.value)} className="rounded-lg border border-gray-700 bg-gray-900 p-2">
+        <option value="">Automatic</option>
+        {['Work', 'Personal', 'Learning', 'Health', 'Finance', 'Ideas', 'Reference', 'Other'].map(category =>
+          <option key={category} value={category}>{category}</option>)}
+      </select>
+      {metadata.category_locked && <span>Manual category · preserved during processing</span>}
+    </label>
+    <div className="mb-4 flex flex-wrap gap-2">{metadata.tags?.map(tag =>
+      <span key={tag} className="rounded-md bg-gray-800 px-2 py-1 text-xs text-gray-300">{tag}</span>)}</div>
+    <input aria-label="Note title" value={title} onChange={event => setTitle(event.target.value)}
+      placeholder="Title (optional)" className="mb-4 w-full bg-transparent text-2xl font-bold text-white" />
+    <textarea aria-label="Note content" value={content} onChange={event => setContent(event.target.value)}
+      rows={24} className="w-full resize-y bg-transparent text-base leading-relaxed text-gray-200" />
+  </div>
 }

@@ -24,3 +24,9 @@ export function formatMMSS(totalSeconds: number): string {
   const s = totalSeconds % 60
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
+
+// Backdate the resumed start to preserve the time already spent in this phase.
+export function resumedStartedAt(session: FocusSession, now: Date = new Date()): string {
+  const remaining = Math.min(phaseDurationSeconds(session), remainingSeconds(session, now))
+  return new Date(now.getTime() - (phaseDurationSeconds(session) - remaining) * 1000).toISOString()
+}

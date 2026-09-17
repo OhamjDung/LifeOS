@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { FocusSession } from '@/lib/types'
-import { remainingSeconds, formatMMSS } from '@/lib/sessionTimer'
+import { remainingSeconds, formatMMSS, resumedStartedAt } from '@/lib/sessionTimer'
 import { SessionTaskPanel } from '@/components/SessionTaskPanel'
 import { EndSessionModal } from '@/components/EndSessionModal'
 import { LockinRatingModal } from '@/components/LockinRatingModal'
@@ -20,6 +20,8 @@ export default function SessionDetailPage() {
   const sessionId = params.id
 
   const [session, setSession] = useState<FocusSession | null>(null)
+  const savingRef = useRef(false)
+  const [saveError, setSaveError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [remaining, setRemaining] = useState(0)
   const [showEndModal, setShowEndModal] = useState(false)
@@ -31,28 +33,35 @@ export default function SessionDetailPage() {
       setSession(data as FocusSession)
       setLoaded(true)
     })()
-  }, [sessionId])
+  }, [sessionId, supabase])
 
   useEffect(() => {
     if (!session) return
-    setRemaining(remainingSeconds(session))
+    const initial = setTimeout(() => setRemaining(remainingSeconds(session)), 0)
     const interval = setInterval(() => setRemaining(remainingSeconds(session)), 1000)
-    return () => clearInterval(interval)
+    return () => { clearTimeout(initial); clearInterval(interval) }
   }, [session])
 
   const updateSession = useCallback(async (patch: Partial<FocusSession>) => {
-    if (!session) return
+    if (!session || savingRef.current) return
+    savingRef.current = true
+    setSaveError('')
     const next = { ...session, ...patch }
     setSession(next)
-    await supabase.from('sessions').update(patch).eq('id', session.id)
-  }, [session])
+    try {
+      const { error } = await supabase.from('sessions').update(patch).eq('id', session.id)
+      if (error) throw error
+    } catch { setSession(session); setSaveError('Could not save timer change. Please retry.') }
+    finally { savingRef.current = false }
+  }, [session, supabase])
 
   function pause() {
-    updateSession({ phase_started_at: null, phase_remaining_seconds: remaining })
+    updateSession({ phase_started_at: null, phase_remaining_seconds: session ? remainingSeconds(session) : remaining })
   }
 
   function resume() {
-    updateSession({ phase_started_at: new Date().toISOString(), phase_remaining_seconds: null })
+    if (!session) return
+    updateSession({ phase_started_at: resumedStartedAt(session), phase_remaining_seconds: null })
   }
 
   function startBreak() {
@@ -79,6 +88,7 @@ export default function SessionDetailPage() {
 
   return (
     <div className="min-h-full p-8 transition-colors duration-500" style={{ background: bg, color: fg }}>
+      {saveError && <p role="alert" className="mb-3">{saveError}</p>}
       <div className="flex items-center justify-between mb-8">
         <button onClick={() => router.push('/session')} className="text-sm opacity-70 hover:opacity-100">
           ← All sessions

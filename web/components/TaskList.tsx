@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/lib/types'
 import { useTaskSelection } from '@/lib/taskSelection'
@@ -132,14 +132,27 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const mutationLocks = useRef(new Set<string>())
+  const [mutationError, setMutationError] = useState('')
+
+  async function updateTask(task: Task, patch: Partial<Task>) {
+    if (task.id.startsWith('temp-') || mutationLocks.current.has(task.id)) return
+    mutationLocks.current.add(task.id)
+    setMutationError('')
+    setTasks(previous => previous.map(item => item.id === task.id ? { ...item, ...patch } : item))
+    try {
+      const { error } = await supabase.from('tasks').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', task.id)
+      if (error) throw error
+    } catch {
+      const rollback = Object.fromEntries(Object.keys(patch).map(key => [key, task[key as keyof Task]]))
+      setTasks(previous => previous.map(item => item.id === task.id ? { ...item, ...rollback } : item))
+      setMutationError('Could not save that change. It has been restored; please retry.')
+    } finally { mutationLocks.current.delete(task.id) }
+  }
+
   async function moveTaskToGroup(taskId: string, groupId: string | null) {
-    const prevTasks = tasks
-    setTasks(prev => prev.map(t => (t.id === taskId ? { ...t, group_id: groupId } : t)))
-    const { error } = await supabase
-      .from('tasks')
-      .update({ group_id: groupId, updated_at: new Date().toISOString() })
-      .eq('id', taskId)
-    if (error) setTasks(prevTasks)
+    const task = tasks.find(item => item.id === taskId)
+    if (task) await updateTask(task, { group_id: groupId })
   }
 
   function handleGroupDragStart(taskId: string) {
@@ -277,16 +290,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   }
 
   async function markDone(task: Task) {
-    const newStatus = task.status === 'done' ? 'pending' : 'done'
-    const prevTasks = tasks
-    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, status: newStatus } : t)))
-
-    const { error } = await supabase
-      .from('tasks')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', task.id)
-
-    if (error) setTasks(prevTasks)
+    await updateTask(task, { status: task.status === 'done' ? 'pending' : 'done' })
   }
 
   async function rollover(task: Task) {
@@ -320,30 +324,14 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     setEditingId(null)
     if (!title || title === task.title) return
 
-    const prevTasks = tasks
-    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, title } : t)))
-
-    const { error } = await supabase
-      .from('tasks')
-      .update({ title, updated_at: new Date().toISOString() })
-      .eq('id', task.id)
-
-    if (error) setTasks(prevTasks)
+    await updateTask(task, { title })
   }
 
   async function updateDueDate(task: Task, newDate: string) {
     setEditingDueId(null)
     if (!newDate || newDate === task.due_date) return
 
-    const prevTasks = tasks
-    setTasks(prev => prev.map(t => (t.id === task.id ? { ...t, due_date: newDate } : t)))
-
-    const { error } = await supabase
-      .from('tasks')
-      .update({ due_date: newDate, updated_at: new Date().toISOString() })
-      .eq('id', task.id)
-
-    if (error) setTasks(prevTasks)
+    await updateTask(task, { due_date: newDate })
   }
 
   async function deleteTask(id: string) {
@@ -523,6 +511,8 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
 
   return (
     <div className="space-y-4">
+      {mutationError && <p role="alert" className="mb-3 text-sm text-red-700">{mutationError}</p>}
+
       {/* Order-by + group button toolbar */}
       <div className="flex justify-between items-center flex-wrap gap-2">
         <div className="flex items-center gap-2">

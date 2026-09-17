@@ -1,3 +1,5 @@
+import { normalizeGroups } from '../_shared/taskGrouping.ts'
+import { createClient } from 'jsr:@supabase/supabase-js@2'
 import OpenAI from 'npm:openai'
 
 const cors = {
@@ -12,10 +14,21 @@ Deno.serve(async (req) => {
   const auth = req.headers.get('Authorization')
   if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401, headers: cors })
 
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: cors })
+  const client = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: auth } },
+  })
+  const { data: { user }, error: authError } = await client.auth.getUser()
+  if (authError || !user) return new Response('Unauthorized', { status: 401, headers: cors })
+
   let tasks: { id: string; title: string }[]
   try {
     const body = await req.json()
-    tasks = body.tasks ?? []
+    if (!Array.isArray(body.tasks) || body.tasks.length > 200 || body.tasks.some((t: { id?: unknown; title?: unknown }) =>
+      !t || typeof t.id !== 'string' || typeof t.title !== 'string' || t.title.length > 1000)) {
+      throw new Error('Invalid task list')
+    }
+    tasks = [...new Map<string, { id: string; title: string }>(body.tasks.map((t: { id: string; title: string }) => [t.id, t])).values()]
   } catch {
     return new Response('Bad request', { status: 400, headers: cors })
   }
@@ -30,11 +43,15 @@ Deno.serve(async (req) => {
   const openai = new OpenAI({
     baseURL: 'https://api.deepseek.com',
     apiKey: Deno.env.get('DEEPSEEK_TOKEN')!,
+    timeout: 45000,
+    maxRetries: 1,
   })
 
   try {
     const completion = await openai.chat.completions.create({
       model: 'deepseek-v4-flash',
+      // @ts-expect-error DeepSeek extension forwarded by the OpenAI SDK
+      thinking: { type: 'disabled' },
       messages: [
         {
           role: 'system',
@@ -55,12 +72,8 @@ Rules:
       response_format: { type: 'json_object' },
     })
 
-    let result: { groups: unknown[]; ungrouped_ids: unknown[] }
-    try {
-      result = JSON.parse(completion.choices[0].message.content!)
-    } catch {
-      result = { groups: [], ungrouped_ids: tasks.map(t => t.id) }
-    }
+    const raw = JSON.parse(completion.choices[0]?.message.content ?? '{}')
+    const result = normalizeGroups(raw, tasks)
 
     return new Response(JSON.stringify(result), {
       headers: { ...cors, 'Content-Type': 'application/json' },

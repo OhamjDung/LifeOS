@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useDeferredValue } from 'react'
 import Link from 'next/link'
 import { Note } from '@/lib/types'
 
@@ -14,18 +14,20 @@ const CATEGORY_COLORS: Record<string, string> = {
 export function NotesFilter({ notes }: { notes: Note[] }) {
   const [query, setQuery] = useState('')
 
-  const filtered = query.trim()
+  const normalizedQuery = useDeferredValue(query.trim().toLowerCase())
+  const filtered = normalizedQuery
     ? notes.filter(n =>
-        n.title?.toLowerCase().includes(query.toLowerCase()) ||
-        n.content?.toLowerCase().includes(query.toLowerCase()) ||
-        n.tags?.some(t => t.toLowerCase().includes(query.toLowerCase()))
+        n.title?.toLowerCase().includes(normalizedQuery) ||
+        n.content?.toLowerCase().includes(normalizedQuery) ||
+        n.tags?.some(t => t.toLowerCase().includes(normalizedQuery))
       )
     : notes
 
   return (
     <>
       <input
-        type="text"
+        aria-label="Filter notes"
+        type="search"
         value={query}
         onChange={e => setQuery(e.target.value)}
         placeholder="Filter by title, content, or tag…"

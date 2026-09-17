@@ -1,3 +1,5 @@
+import { chunkText } from '../_shared/noteText.ts'
+import { resolveCaller } from '../_shared/auth.ts'
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import OpenAI from 'npm:openai'
 
@@ -9,70 +11,36 @@ const supabase = createClient(
 const openai = new OpenAI({
   baseURL: 'https://api.deepseek.com',
   apiKey: Deno.env.get('DEEPSEEK_TOKEN')!,
+  timeout: 45000,
+  maxRetries: 1,
 })
 
 async function jinaEmbed(inputs: string[], task: 'retrieval.passage' | 'retrieval.query' = 'retrieval.passage'): Promise<number[][]> {
   const res = await fetch('https://api.jina.ai/v1/embeddings', {
     method: 'POST',
+    signal: AbortSignal.timeout(30000),
     headers: {
       'Authorization': `Bearer ${Deno.env.get('JINA_API_KEY')}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ model: 'jina-embeddings-v3', input: inputs, task, dimensions: 1024 }),
   })
+  if (!res.ok) throw new Error(`Embedding request failed (${res.status})`)
   const json = await res.json()
+  if (!Array.isArray(json.data) || json.data.length !== inputs.length) throw new Error('Invalid embeddings')
   return json.data.map((d: { embedding: number[] }) => d.embedding)
 }
 
-function chunkText(text: string): string[] {
-  const MAX_CHARS = 1200
-  const OVERLAP_CHARS = 200
-
-  const paragraphs = text.split(/\n\n+/).filter(p => p.trim())
-
-  if (text.length <= MAX_CHARS) return [text]
-
-  const chunks: string[] = []
-  let current = ''
-
-  for (const para of paragraphs) {
-    if ((current + '\n\n' + para).length <= MAX_CHARS) {
-      current = current ? current + '\n\n' + para : para
-    } else {
-      if (current) chunks.push(current)
-      if (para.length > MAX_CHARS) {
-        const sentences = para.match(/[^.!?]+[.!?]+/g) ?? [para]
-        let sub = ''
-        for (const s of sentences) {
-          if ((sub + ' ' + s).length <= MAX_CHARS) {
-            sub = sub ? sub + ' ' + s : s
-          } else {
-            if (sub) chunks.push(sub)
-            sub = s
-          }
-        }
-        if (sub) current = sub
-      } else {
-        current = para
-      }
-    }
-  }
-  if (current) chunks.push(current)
-
-  return chunks.map((chunk, i) => {
-    if (i === 0) return chunk
-    const prev = chunks[i - 1]
-    const overlap = prev.slice(-OVERLAP_CHARS)
-    return overlap + ' ' + chunk
-  })
-}
-
-async function processNote(note: { id: string; content: string; title: string | null; user_id: string; created_at: string }) {
+async function processNote(note: { id: string; content: string; title: string | null; user_id: string; created_at: string; updated_at: string; retry_count: number; category: string | null; tags: string[]; category_locked: boolean }) {
   console.log('[embed-note] processing note:', note.id, 'title:', note.title?.slice(0, 50) ?? 'Untitled')
-  await supabase
-    .from('notes')
-    .update({ processing_status: 'processing', updated_at: new Date().toISOString() })
-    .eq('id', note.id)
+  const claimTime = new Date().toISOString()
+  const { data: claimed, error: claimError } = await supabase.from('notes')
+    .update({ processing_status: 'processing', updated_at: claimTime })
+    .eq('id', note.id).eq('updated_at', note.updated_at).select('id').maybeSingle()
+  if (claimError) throw claimError
+  if (!claimed) return
+  // Keep the claimed version for guarded success and failure writes.
+  note.updated_at = claimTime
 
   const chunks = chunkText(note.content)
 
@@ -93,7 +61,7 @@ async function processNote(note: { id: string; content: string; title: string | 
       .from('tags')
       .select('name')
       .eq('user_id', note.user_id)
-      .order('name'),
+      .order('name').limit(100),
     jinaEmbed(chunks),
   ])
 
@@ -106,17 +74,6 @@ async function processNote(note: { id: string; content: string; title: string | 
   const similarNotes = ((similarRaw ?? []) as Array<{ note_id: string; title: string; chunk_text: string; similarity: number }>)
     .filter(r => r.note_id !== note.id)
     .slice(0, 5)
-
-  await supabase.from('note_chunks').delete().eq('note_id', note.id)
-
-  await supabase.from('note_chunks').insert(
-    chunks.map((chunk, i) => ({
-      note_id: note.id,
-      chunk_index: i,
-      chunk_text: chunk,
-      embedding: JSON.stringify(embeddings[i]),
-    }))
-  )
 
   const nearbyNotes = nearbyResult.data ?? []
   const existingTags = (tagsResult.data ?? []).map(t => t.name)
@@ -140,8 +97,13 @@ async function processNote(note: { id: string; content: string; title: string | 
 Category: one of [Work, Personal, Learning, Health, Finance, Ideas, Reference, Other].
 Tags: 2-4 lowercase keywords. STRONGLY prefer tags from the existing tags list. Only add a new tag if none of the existing ones fit.${tagsBlock}`
 
+  let category = note.category
+  let tags = note.tags ?? []
+  if (!note.category_locked) {
   const completion = await openai.chat.completions.create({
     model: 'deepseek-v4-flash',
+    // @ts-expect-error DeepSeek extension forwarded by the OpenAI SDK
+    thinking: { type: 'disabled' },
     messages: [
       { role: 'system', content: systemPrompt },
       {
@@ -152,17 +114,19 @@ Tags: 2-4 lowercase keywords. STRONGLY prefer tags from the existing tags list. 
     response_format: { type: 'json_object' },
   })
 
-  const { category, tags } = JSON.parse(completion.choices[0].message.content ?? '{}')
+  const parsed = JSON.parse(completion.choices[0]?.message.content ?? '{}')
+  const categories = ['Work', 'Personal', 'Learning', 'Health', 'Finance', 'Ideas', 'Reference', 'Other']
+  if (!parsed || !categories.includes(parsed.category) || !Array.isArray(parsed.tags)) throw new Error('Invalid categorization')
+  category = parsed.category
+  tags = [...new Set<string>(parsed.tags.filter((tag: unknown) => typeof tag === 'string' && tag.trim()).map((tag: string) => tag.trim().toLowerCase().slice(0, 50)))].slice(0, 4)
+  }
   console.log('[embed-note] note:', note.id, '→ category:', category, 'tags:', tags)
 
-  await supabase
-    .from('notes')
-    .update({
-      category: category ?? null,
-      tags: tags ?? [],
-      processing_status: 'done',
-    })
-    .eq('id', note.id)
+  const { error: updateError } = await supabase.rpc('finish_note_processing', {
+    p_note_id: note.id, p_claim_time: claimTime, p_category: category, p_tags: tags,
+    p_chunks: chunks.map((chunk, i) => ({ chunk_index: i, chunk_text: chunk, embedding: JSON.stringify(embeddings[i]) })),
+  })
+  if (updateError) throw updateError
 }
 
 const cors = {
@@ -173,29 +137,42 @@ const cors = {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors })
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: cors })
+  // pg_cron (service key) drains everyone's queue; a signed-in user only drains their own.
+  const caller = await resolveCaller(req, supabase)
+  if (!caller) return new Response('Unauthorized', { status: 401, headers: cors })
+  const userId = caller.kind === 'user' ? caller.userId : null
 
   const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-  const { data: notes } = await supabase
+  let query = supabase
     .from('notes')
-    .select('id, content, title, user_id, created_at')
+    .select('id, content, title, user_id, created_at, updated_at, retry_count, category, tags, category_locked')
     .or(`processing_status.eq.pending,and(processing_status.eq.processing,updated_at.lt.${staleBefore})`)
     .lt('retry_count', 3)
     .limit(10)
+  if (userId) query = query.eq('user_id', userId)
+  const { data: notes, error: queryError } = await query
+  if (queryError) return new Response('Unable to load queue', { status: 500, headers: cors })
 
   if (!notes?.length) return new Response(JSON.stringify({ processed: 0 }), { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-  const results = await Promise.allSettled(notes.map(processNote))
+  // Sequential on purpose: Jina's free tier 429s when ~10 embed calls land at once.
+  const results: PromiseSettledResult<void>[] = []
+  for (const note of notes) {
+    try { results.push({ status: 'fulfilled', value: await processNote(note) }) }
+    catch (reason) { results.push({ status: 'rejected', reason }) }
+  }
 
   for (let i = 0; i < notes.length; i++) {
     if (results[i].status === 'rejected') {
-      await supabase.rpc('increment_note_retry', { note_id: notes[i].id })
       await supabase
         .from('notes')
         .update({
-          processing_status: 'failed',
+          processing_status: notes[i].retry_count + 1 < 3 ? 'pending' : 'failed',
+          retry_count: notes[i].retry_count + 1,
           last_error: String((results[i] as PromiseRejectedResult).reason),
         })
-        .eq('id', notes[i].id)
+        .eq('id', notes[i].id).eq('updated_at', notes[i].updated_at).eq('processing_status', 'processing')
     }
   }
 

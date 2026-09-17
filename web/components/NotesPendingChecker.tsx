@@ -3,22 +3,19 @@
 import { useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
+// Nudges fn-embed-note when the notes list shows queued notes. Fire-and-forget:
+// pg_cron drains the queue every 2 min regardless; this only shortens the wait.
 export function NotesPendingChecker({ pendingCount }: { pendingCount: number }) {
-  const supabase = createClient()
-
   useEffect(() => {
     if (pendingCount === 0) return
-    console.log(`[notes] ${pendingCount} note(s) pending categorization — triggering fn-embed-note...`)
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-embed-note`,
-        { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
-      )
-        .then(r => r.json())
-        .then(b => console.log('[notes] fn-embed-note response:', b))
-        .catch(e => console.error('[notes] fn-embed-note error:', e))
-    })
-  }, [])
+    const supabase = createClient()
+    void supabase.auth.getSession().then(({ data: { session } }) => fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/fn-embed-note`,
+      { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token}` } },
+    )).catch(() => {})
+  }, [pendingCount])
 
-  return null
+  return pendingCount > 0
+    ? <p role="status" className="mb-3 text-xs text-gray-400">{pendingCount} note(s) queued for background categorization.</p>
+    : null
 }
