@@ -103,8 +103,20 @@ export interface BraindumpJobResult {
   contactsUpdated?: string[]
   interactionsLogged?: ContactInteractionLogged[]
   pendingContacts?: PendingContact[]
+  contactReport?: ContactReportItem[]
   logs: string[]
   errors: string[]
+}
+
+// One line per person the braindump model extracted, whatever happened to them.
+export interface ContactReportItem {
+  name: string
+  status: 'created' | 'updated' | 'pending' | 'error'
+  contact_tier: ContactTier | null
+  relationship_tier: RelationshipTier | null
+  fields: Record<string, string>
+  interaction: { type: 'met' | 'message_sent'; date: string; summary: string | null } | null
+  matchCount: number
 }
 
 // A contact the braindump extracted whose name collides with existing contact(s).

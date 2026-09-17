@@ -12,7 +12,7 @@ const FIELD_LABELS: Record<string, string> = {
   contact_tier: 'Contact tier', relationship_tier: 'Relationship',
 }
 
-export type ContactResolution = { name: string; created: boolean; interaction: PendingContact['interaction'] }
+export type ContactResolution = { pendingName: string; name: string; created: boolean; interaction: PendingContact['interaction'] }
 
 export default function ResolveContactsModal({
   pending,
@@ -43,7 +43,7 @@ export default function ResolveContactsModal({
         const target = choice[i] ?? 'new'
         const { created } = await applyPendingContact(supabase, user.id, pc, target)
         const displayName = created ? pc.name : (pc.matches.find(m => m.id === target)?.name ?? pc.name)
-        resolutions.push({ name: displayName, created, interaction: pc.interaction })
+        resolutions.push({ pendingName: pc.name, name: displayName, created, interaction: pc.interaction })
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save')
@@ -70,7 +70,12 @@ export default function ResolveContactsModal({
             return (
               <div key={i} className="space-y-2">
                 <div>
-                  <p className="text-sm font-semibold text-gray-200">{pc.name}</p>
+                  <p className="text-sm font-semibold text-gray-200">
+                    {pc.name}
+                    {pc.fields.contact_tier && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{pc.fields.contact_tier}</span>
+                    )}
+                  </p>
                   {pc.interaction && (
                     <p className="text-[11px] text-orange-400">
                       {pc.interaction.type === 'met' ? 'Met' : 'Messaged'} · {pc.interaction.date}
@@ -79,7 +84,7 @@ export default function ResolveContactsModal({
                   )}
                   {fieldEntries.length > 0 && (
                     <div className="mt-1 space-y-0.5">
-                      {fieldEntries.map(([k, v]) => (
+                      {fieldEntries.filter(([k]) => k !== 'contact_tier').map(([k, v]) => (
                         <p key={k} className="text-[11px] text-gray-500 line-clamp-2">
                           <span className="text-gray-600">{FIELD_LABELS[k] ?? k}:</span> {v}
                         </p>

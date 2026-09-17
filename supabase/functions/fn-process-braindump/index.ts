@@ -93,8 +93,8 @@ const contactsTool = {
               less_useful_for: { type: 'string' },
               rating: { type: 'string', description: 'Freeform debrief/rating of the interaction, if mentioned' },
               next_step: { type: 'string' },
-              contact_tier: { type: 'string', enum: ['daily', 'weekly', 'biweekly', 'monthly'], description: 'How often to stay in touch. Default weekly.' },
-              relationship_tier: { type: 'string', enum: ['family', 'close_friend', 'friend', 'acquaintance'], description: 'Default friend.' },
+              contact_tier: { type: 'string', enum: ['daily', 'weekly', 'biweekly', 'monthly'], description: 'How often the user should stay in touch. Infer from closeness: family / close friends → weekly or biweekly; recruiters, one-off informational chats, cold outreach, panel speakers → monthly. If the user states a cadence, use it. For an existing contact, ONLY include this if the transcript says how often to keep in touch.' },
+              relationship_tier: { type: 'string', enum: ['family', 'close_friend', 'friend', 'acquaintance'], description: 'family / close_friend / friend / acquaintance. Professional or one-off contacts are acquaintance.' },
             },
             required: ['name'],
           },
@@ -132,7 +132,19 @@ interface Outcome {
   contactsUpdated: string[]
   interactionsLogged: { name: string; type: string; date: string }[]
   pendingContacts: PendingContact[]
+  contactReport: ContactReportItem[]
   log: string[]
+}
+
+// One line per person the model extracted, regardless of what happened to them.
+interface ContactReportItem {
+  name: string
+  status: 'created' | 'updated' | 'pending' | 'error'
+  contact_tier: string | null
+  relationship_tier: string | null
+  fields: Record<string, string>
+  interaction: { type: string; date: string; summary: string | null } | null
+  matchCount: number
 }
 
 interface PendingContact {
@@ -148,7 +160,7 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
 
   const categories = job.categories?.length ? job.categories : ['Tasks']
   trace(`job ${job.id} — categories: ${categories.join(', ')} — transcript: "${job.raw_transcript.slice(0, 100)}${job.raw_transcript.length > 100 ? '…' : ''}"`)
-  const outcome: Outcome = { created: [], merged: [], duplicates: [], pendingDeletions: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], log }
+  const outcome: Outcome = { created: [], merged: [], duplicates: [], pendingDeletions: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], contactReport: [], log }
 
   try {
     await supabase
@@ -203,6 +215,7 @@ ${wantsContacts ? `
 Contacts (call submit_contacts): if the transcript describes a specific person the user met, contacted, or wants to remember (name + any context), extract them as a contact with whatever structured fields are present in the text (title, education, location, email, phone, linkedin, how they met, why they're a good contact, what they're less useful for, rating/debrief notes, next step). Do not fabricate fields that aren't in the transcript — leave them out.
 - If the person matches one in the existing contacts list below (same person, allowing for nicknames / first-name-only), set existing_id to that contact's id and include ONLY the fields the transcript adds or changes. Do not re-send fields you can't see in the transcript.
 - If the transcript says the user already met, saw, called, texted, or emailed the person (past tense — it happened), include an interaction with type, the inferred date, and a one-line summary. Planned/future contact ("should call", "will meet next week") is NOT an interaction — that belongs in next_step or a task.
+- Always set contact_tier and relationship_tier for a NEW person. Professional / networking / recruiter / one-off informational contacts → contact_tier "monthly", relationship_tier "acquaintance". Family → "biweekly"/"family". Close friends → "weekly"/"close_friend". If the user says how often ("keep in touch weekly"), use that. For an EXISTING contact, omit contact_tier unless the transcript states a cadence — never change it silently.
 
 Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name: c.name, title: c.title })))}` : ''}`,
         },
@@ -306,28 +319,42 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
       const { interaction, existing_id, ...fields } = c
       let contactId: string | null = null
 
+      const cleanFields: Record<string, string> = {}
+      for (const [k, v] of Object.entries(fields)) if (k !== 'name' && typeof v === 'string' && v) cleanFields[k] = v
+      const cleanInteraction = interaction?.type
+        ? {
+            type: interaction.type === 'message_sent' ? 'message_sent' : 'met',
+            date: interaction.date && /^\d{4}-\d{2}-\d{2}$/.test(interaction.date) ? interaction.date : today,
+            summary: interaction.summary ?? null,
+          }
+        : null
+
       // Server-side name collision check, independent of what the model chose.
       // Only an unambiguous case (exactly one same-name row, and the model pointed at it)
       // is written automatically; anything else is handed back to the user to resolve.
       const nameMatches = existingContacts.filter(e => namesCollide(e.name, c.name!))
       const unambiguous = nameMatches.length === 0 || (nameMatches.length === 1 && existing_id === nameMatches[0].id)
+      const report: ContactReportItem = {
+        name: c.name,
+        status: 'error',
+        contact_tier: c.contact_tier ?? null,
+        relationship_tier: c.relationship_tier ?? null,
+        fields: cleanFields,
+        interaction: cleanInteraction,
+        matchCount: nameMatches.length,
+      }
+      outcome.contactReport.push(report)
+
       if (!unambiguous) {
-        const cleanFields: Record<string, string> = {}
-        for (const [k, v] of Object.entries(fields)) if (k !== 'name' && typeof v === 'string' && v) cleanFields[k] = v
         const pend: PendingContact = {
           name: c.name,
           fields: cleanFields,
-          interaction: interaction?.type
-            ? {
-                type: interaction.type === 'message_sent' ? 'message_sent' : 'met',
-                date: interaction.date && /^\d{4}-\d{2}-\d{2}$/.test(interaction.date) ? interaction.date : today,
-                summary: interaction.summary ?? null,
-              }
-            : null,
+          interaction: cleanInteraction,
           matches: nameMatches.map(m => ({ id: m.id, name: m.name, title: m.title, location: m.location })),
         }
         trace(`name collision for "${c.name}" — ${nameMatches.length} existing row(s) (${nameMatches.map(m => m.name).join(', ')}); model existing_id=${existing_id ?? 'none'} → pending user review`)
         outcome.pendingContacts.push(pend)
+        report.status = 'pending'
         continue
       }
 
@@ -359,6 +386,10 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
           outcome.contactsUpdated.push(current.name)
         }
         contactId = existing_id
+        report.name = current.name
+        report.status = 'updated'
+        report.contact_tier = patch.contact_tier ?? current.contact_tier ?? null
+        report.relationship_tier = patch.relationship_tier ?? current.relationship_tier ?? null
       } else {
         if (existing_id) trace(`existing_id ${existing_id} not in user's contacts — treating "${c.name}" as new`)
         trace(`inserting contact: "${c.name}"`)
@@ -376,12 +407,15 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
           less_useful_for: c.less_useful_for ?? null,
           rating: c.rating ?? null,
           next_step: c.next_step ?? null,
-          contact_tier: c.contact_tier ?? 'weekly',
-          relationship_tier: c.relationship_tier ?? 'friend',
+          contact_tier: c.contact_tier ?? 'monthly',
+          relationship_tier: c.relationship_tier ?? 'acquaintance',
         }).select('id').single()
         if (insertErr || !inserted) { trace(`INSERT ERROR for contact "${c.name}": ${insertErr?.message}`); continue }
         outcome.contactsCreated.push(c.name)
         contactId = inserted.id
+        report.status = 'created'
+        report.contact_tier = c.contact_tier ?? 'monthly'
+        report.relationship_tier = c.relationship_tier ?? 'acquaintance'
       }
 
       if (interaction?.type && contactId) {
@@ -451,6 +485,7 @@ Deno.serve(async (req) => {
   const contactsUpdated: string[] = []
   const interactionsLogged: Outcome['interactionsLogged'] = []
   const pendingContacts: (PendingContact & { jobId: string })[] = []
+  const contactReport: (ContactReportItem & { jobId: string })[] = []
   const logs: string[] = []
   const errors: string[] = []
   for (let i = 0; i < jobs.length; i++) {
@@ -469,11 +504,12 @@ Deno.serve(async (req) => {
       contactsUpdated.push(...(v?.contactsUpdated ?? []))
       interactionsLogged.push(...(v?.interactionsLogged ?? []))
       pendingContacts.push(...(v?.pendingContacts ?? []).map(pc => ({ ...pc, jobId: jobs[i].id })))
+      contactReport.push(...(v?.contactReport ?? []).map(r => ({ ...r, jobId: jobs[i].id })))
       logs.push(...(v?.log ?? []))
     }
   }
 
-  return new Response(JSON.stringify({ processed: jobs.length, created, merged, pendingDeletions, contactsCreated, contactsUpdated, interactionsLogged, pendingContacts, logs, errors }), {
+  return new Response(JSON.stringify({ processed: jobs.length, created, merged, pendingDeletions, contactsCreated, contactsUpdated, interactionsLogged, pendingContacts, contactReport, logs, errors }), {
     headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })

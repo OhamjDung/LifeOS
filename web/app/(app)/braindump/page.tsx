@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import DeleteTasksModal from '@/components/DeleteTasksModal'
-import { BraindumpJob, ContactInteractionLogged, PendingContact } from '@/lib/types'
+import { BraindumpJob, ContactInteractionLogged, PendingContact, ContactReportItem } from '@/lib/types'
 import ResolveContactsModal, { ContactResolution } from '@/components/ResolveContactsModal'
 
 type Category = 'Tasks' | 'Notes' | 'Contacts'
@@ -23,6 +23,7 @@ interface HistoryEntry {
   contactsUpdated: string[]
   interactionsLogged: ContactInteractionLogged[]
   pendingContacts: PendingContact[]
+  contactReport: ContactReportItem[]
   noteContent?: string
   logs: string[]
   errors: string[]
@@ -42,6 +43,7 @@ function jobToEntry(job: BraindumpJob): HistoryEntry {
     contactsUpdated: job.result?.contactsUpdated ?? [],
     interactionsLogged: job.result?.interactionsLogged ?? [],
     pendingContacts: job.result?.pendingContacts ?? [],
+    contactReport: job.result?.contactReport ?? [],
     logs: job.result?.logs ?? [],
     errors: job.result?.errors ?? (job.last_error ? [job.last_error] : []),
   }
@@ -163,7 +165,7 @@ export default function BraindumpPage() {
       categories: entry.categories,
       transcript: `Adjustment on previous dump: ${instruction.trim()}`,
       status: 'extracting',
-      created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
+      created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], contactReport: [], logs: [], errors: [],
     }, ...prev])
     runExtraction(job.id, session)
   }
@@ -181,6 +183,11 @@ export default function BraindumpPage() {
         ...resolutions.filter(r => r.interaction).map(r => ({ name: r.name, type: r.interaction!.type, date: r.interaction!.date })),
       ],
       pendingContacts: [],
+      contactReport: entry.contactReport.map(r => {
+        if (r.status !== 'pending') return r
+        const res = resolutions.find(x => x.pendingName === r.name)
+        return res ? { ...r, name: res.name, status: res.created ? 'created' : 'updated' } : r
+      }),
     }
     setHistory(prev => prev.map(h => h.id === jobId ? next : h))
     // Persist so the card doesn't re-prompt after reload.
@@ -193,6 +200,7 @@ export default function BraindumpPage() {
           contactsUpdated: next.contactsUpdated,
           interactionsLogged: next.interactionsLogged,
           pendingContacts: [],
+          contactReport: next.contactReport,
         },
       }).eq('id', jobId)
     }
@@ -218,6 +226,7 @@ export default function BraindumpPage() {
         contactsUpdated: body?.contactsUpdated ?? [],
         interactionsLogged: body?.interactionsLogged ?? [],
         pendingContacts: (body?.pendingContacts ?? []).filter((pc: PendingContact & { jobId?: string }) => !pc.jobId || pc.jobId === jobId),
+        contactReport: (body?.contactReport ?? []).filter((r: ContactReportItem & { jobId?: string }) => !r.jobId || r.jobId === jobId),
         logs: body?.logs ?? [],
         errors: body?.errors ?? (res.ok ? [] : [`HTTP ${res.status}${body ? ': ' + JSON.stringify(body) : ''}`]),
       } : h))
@@ -258,7 +267,7 @@ export default function BraindumpPage() {
           categories,
           transcript: full,
           status: 'extracting',
-          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], contactReport: [], logs: [], errors: [],
           noteContent: categories.includes('Notes') ? full : undefined,
         }, ...prev])
         runExtraction(job.id, session)
@@ -274,7 +283,7 @@ export default function BraindumpPage() {
           categories,
           transcript: full,
           status: 'done',
-          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], contactReport: [], logs: [], errors: [],
           noteContent: full,
         }, ...prev])
       }
@@ -431,20 +440,24 @@ function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt, onReviewCont
         )}
 
         {entry.categories.includes('Contacts') && (
-          <ResultSection
-            icon="●" label="Contacts" color="orange"
-            loading={entry.status === 'extracting'}
-            items={[
-              ...entry.contactsCreated,
-              ...entry.contactsUpdated.map(n => n + ' — updated'),
-              ...entry.interactionsLogged.map(i => (i.type === 'met' ? 'Met ' : 'Messaged ') + i.name + ' · ' + i.date),
-            ]}
-            emptyMsg="No contacts found."
-            link={{ href: '/contacts', label: 'View contacts →' }}
-          />
+          entry.status !== 'extracting' && entry.contactReport.length > 0 ? (
+            <ContactsReport report={entry.contactReport} pendingCount={entry.pendingContacts.length} onReview={onReviewContacts} />
+          ) : (
+            <ResultSection
+              icon="●" label="Contacts" color="orange"
+              loading={entry.status === 'extracting'}
+              items={[
+                ...entry.contactsCreated,
+                ...entry.contactsUpdated.map(n => n + ' — updated'),
+                ...entry.interactionsLogged.map(i => (i.type === 'met' ? 'Met ' : 'Messaged ') + i.name + ' · ' + i.date),
+              ]}
+              emptyMsg="No contacts found."
+              link={{ href: '/contacts', label: 'View contacts →' }}
+            />
+          )
         )}
 
-        {entry.pendingContacts.length > 0 && (
+        {entry.pendingContacts.length > 0 && entry.contactReport.length === 0 && (
           <button
             type="button"
             onClick={onReviewContacts}
@@ -515,6 +528,98 @@ function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt, onReviewCont
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const REPORT_FIELD_LABELS: Record<string, string> = {
+  title: 'Title', education: 'Education', location: 'Location', email: 'Email', phone: 'Phone',
+  linkedin: 'LinkedIn', how_we_met: 'How we met', why_good_contact: 'Why good contact',
+  less_useful_for: 'Less useful for', rating: 'Rating', next_step: 'Next step',
+}
+const REPORT_STATUS: Record<ContactReportItem['status'], { label: string; cls: string }> = {
+  created: { label: 'NEW', cls: 'text-green-400 border-green-900/60' },
+  updated: { label: 'UPDATED', cls: 'text-indigo-400 border-indigo-900/60' },
+  pending: { label: 'NEEDS REVIEW', cls: 'text-orange-400 border-orange-800/60' },
+  error: { label: 'FAILED', cls: 'text-red-400 border-red-900/60' },
+}
+
+function ContactsReport({ report, pendingCount, onReview }: {
+  report: ContactReportItem[]
+  pendingCount: number
+  onReview: () => void
+}) {
+  const counts = report.reduce((acc, r) => { acc[r.status] = (acc[r.status] ?? 0) + 1; return acc }, {} as Record<string, number>)
+  const summary = [
+    counts.created ? `${counts.created} new` : null,
+    counts.updated ? `${counts.updated} updated` : null,
+    counts.pending ? `${counts.pending} need${counts.pending === 1 ? 's' : ''} review` : null,
+    counts.error ? `${counts.error} failed` : null,
+  ].filter(Boolean).join(' · ')
+  const fmtDate = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+  return (
+    <div className="rounded-xl border p-4 border-orange-900/60 bg-gray-900">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-orange-400">
+          ● {report.length} {report.length === 1 ? 'person' : 'people'}
+          <span className="normal-case tracking-normal text-gray-500 font-normal"> — {summary}</span>
+        </p>
+        <Link href="/contacts" className="text-xs text-orange-400 hover:underline">View contacts →</Link>
+      </div>
+
+      <div className="space-y-3">
+        {report.map((r, i) => {
+          const st = REPORT_STATUS[r.status]
+          const fields = Object.entries(r.fields).filter(([k]) => k !== 'contact_tier' && k !== 'relationship_tier')
+          return (
+            <div key={i} className="rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-gray-200">{r.name}</span>
+                <span className={`text-[10px] font-medium tracking-wider border rounded px-1.5 py-0.5 ${st.cls}`}>{st.label}</span>
+                {r.contact_tier && (
+                  <span className="text-[10px] uppercase tracking-wider text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">{r.contact_tier}</span>
+                )}
+                {r.status === 'pending' && r.matchCount > 0 && (
+                  <span className="text-[10px] text-gray-600">{r.matchCount} existing match{r.matchCount === 1 ? '' : 'es'}</span>
+                )}
+              </div>
+              {r.interaction && (
+                <p className="mt-1 text-xs text-gray-400">
+                  <span className="text-orange-400">{r.interaction.type === 'met' ? 'Met' : 'Messaged'}</span>
+                  {' · '}{fmtDate(r.interaction.date)}
+                  {r.interaction.summary ? <span className="text-gray-500"> — {r.interaction.summary}</span> : null}
+                </p>
+              )}
+              {fields.length > 0 && (
+                <div className="mt-1.5 space-y-0.5">
+                  {fields.map(([k, v]) => (
+                    <p key={k} className="text-[11px] text-gray-500 line-clamp-2">
+                      <span className="text-gray-600">{REPORT_FIELD_LABELS[k] ?? k}:</span> {v}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {!r.interaction && fields.length === 0 && (
+                <p className="mt-1 text-[11px] text-gray-600">name only — nothing else in the dump</p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {pendingCount > 0 && (
+        <button
+          type="button"
+          onClick={onReview}
+          className="mt-3 w-full flex items-center justify-between rounded-lg border border-orange-700/60 bg-orange-950/20 px-3 py-2 text-left hover:bg-orange-950/40 transition-colors"
+        >
+          <span className="text-xs text-orange-400">
+            ⚠ {pendingCount} not saved yet — name matches existing contact{pendingCount === 1 ? '' : 's'}
+          </span>
+          <span className="text-xs font-medium text-orange-300">Resolve →</span>
+        </button>
+      )}
     </div>
   )
 }

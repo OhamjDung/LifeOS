@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { Contact, ContactEvent, TIER_INTERVALS } from '@/lib/types'
+import { Contact, ContactEvent, CONTACT_TIER_DAYS } from '@/lib/types'
+import { ContactTierPicker } from '@/components/ContactTierPicker'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ContactDetail } from '@/components/ContactDetail'
@@ -34,7 +35,8 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const daysSince = contact.last_contacted_at
     ? Math.floor((now.getTime() - new Date(contact.last_contacted_at).getTime()) / 86400000)
     : null
-  const isOverdue = daysSince === null || daysSince > TIER_INTERVALS[contact.relationship_tier]
+  const tierDays = CONTACT_TIER_DAYS[contact.contact_tier ?? 'weekly']
+  const isOverdue = daysSince === null || daysSince > tierDays
 
   return (
     <div className="p-8 max-w-2xl">
@@ -55,6 +57,9 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             {contact.relationship_tier.replace('_', ' ')}
             {contact.how_we_met && ` · met via ${contact.how_we_met}`}
           </p>
+          <div className="mt-2">
+            <ContactTierPicker contactId={contact.id} tier={contact.contact_tier ?? 'weekly'} />
+          </div>
         </div>
       </div>
 
@@ -63,7 +68,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
         <p className={`text-sm font-medium ${isOverdue ? 'text-red-400' : 'text-gray-400'}`}>
           {isOverdue
             ? `${daysSince === null ? 'Never contacted' : `${daysSince} days since last contact`} — reach out!`
-            : `Last contact ${daysSince}d ago · next due in ${TIER_INTERVALS[contact.relationship_tier] - daysSince!}d`}
+            : `Last contact ${daysSince}d ago · next due in ${tierDays - daysSince!}d`}
         </p>
       </div>
 

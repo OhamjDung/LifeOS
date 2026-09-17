@@ -31,8 +31,8 @@ export async function applyPendingContact(
       less_useful_for: f.less_useful_for ?? null,
       rating: f.rating ?? null,
       next_step: f.next_step ?? null,
-      contact_tier: f.contact_tier ?? 'weekly',
-      relationship_tier: f.relationship_tier ?? 'friend',
+      contact_tier: f.contact_tier ?? 'monthly',
+      relationship_tier: f.relationship_tier ?? 'acquaintance',
     }).select('id').single()
     if (error || !data) throw new Error(error?.message ?? 'insert failed')
     contactId = data.id
