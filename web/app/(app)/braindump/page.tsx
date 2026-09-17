@@ -4,7 +4,8 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import DeleteTasksModal from '@/components/DeleteTasksModal'
-import { BraindumpJob, ContactInteractionLogged } from '@/lib/types'
+import { BraindumpJob, ContactInteractionLogged, PendingContact } from '@/lib/types'
+import ResolveContactsModal, { ContactResolution } from '@/components/ResolveContactsModal'
 
 type Category = 'Tasks' | 'Notes' | 'Contacts'
 const CATS: Category[] = ['Tasks', 'Notes', 'Contacts']
@@ -21,6 +22,7 @@ interface HistoryEntry {
   contactsCreated: string[]
   contactsUpdated: string[]
   interactionsLogged: ContactInteractionLogged[]
+  pendingContacts: PendingContact[]
   noteContent?: string
   logs: string[]
   errors: string[]
@@ -39,6 +41,7 @@ function jobToEntry(job: BraindumpJob): HistoryEntry {
     contactsCreated: job.result?.contactsCreated ?? [],
     contactsUpdated: job.result?.contactsUpdated ?? [],
     interactionsLogged: job.result?.interactionsLogged ?? [],
+    pendingContacts: job.result?.pendingContacts ?? [],
     logs: job.result?.logs ?? [],
     errors: job.result?.errors ?? (job.last_error ? [job.last_error] : []),
   }
@@ -55,6 +58,7 @@ export default function BraindumpPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const [openDebugId, setOpenDebugId] = useState<string | null>(null)
   const [deleteCandidates, setDeleteCandidates] = useState<DeleteCandidate[]>([])
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<any>(null)
@@ -159,9 +163,39 @@ export default function BraindumpPage() {
       categories: entry.categories,
       transcript: `Adjustment on previous dump: ${instruction.trim()}`,
       status: 'extracting',
-      created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+      created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
     }, ...prev])
     runExtraction(job.id, session)
+  }
+
+  async function handleContactsResolved(jobId: string, resolutions: ContactResolution[]) {
+    setReviewJobId(null)
+    const entry = history.find(h => h.id === jobId)
+    if (!entry) return
+    const next: HistoryEntry = {
+      ...entry,
+      contactsCreated: [...entry.contactsCreated, ...resolutions.filter(r => r.created).map(r => r.name)],
+      contactsUpdated: [...entry.contactsUpdated, ...resolutions.filter(r => !r.created).map(r => r.name)],
+      interactionsLogged: [
+        ...entry.interactionsLogged,
+        ...resolutions.filter(r => r.interaction).map(r => ({ name: r.name, type: r.interaction!.type, date: r.interaction!.date })),
+      ],
+      pendingContacts: [],
+    }
+    setHistory(prev => prev.map(h => h.id === jobId ? next : h))
+    // Persist so the card doesn't re-prompt after reload.
+    const { data: job } = await supabase.from('braindump_jobs').select('result').eq('id', jobId).single()
+    if (job) {
+      await supabase.from('braindump_jobs').update({
+        result: {
+          ...(job.result ?? {}),
+          contactsCreated: next.contactsCreated,
+          contactsUpdated: next.contactsUpdated,
+          interactionsLogged: next.interactionsLogged,
+          pendingContacts: [],
+        },
+      }).eq('id', jobId)
+    }
   }
 
   async function runExtraction(jobId: string, session: any) {
@@ -183,10 +217,12 @@ export default function BraindumpPage() {
         contactsCreated: body?.contactsCreated ?? [],
         contactsUpdated: body?.contactsUpdated ?? [],
         interactionsLogged: body?.interactionsLogged ?? [],
+        pendingContacts: (body?.pendingContacts ?? []).filter((pc: PendingContact & { jobId?: string }) => !pc.jobId || pc.jobId === jobId),
         logs: body?.logs ?? [],
         errors: body?.errors ?? (res.ok ? [] : [`HTTP ${res.status}${body ? ': ' + JSON.stringify(body) : ''}`]),
       } : h))
       if (body?.pendingDeletions?.length) setDeleteCandidates(prev => [...prev, ...body.pendingDeletions])
+      if (body?.pendingContacts?.some((pc: { jobId?: string }) => !pc.jobId || pc.jobId === jobId)) setReviewJobId(jobId)
     } catch (err: any) {
       console.error('[braindump] fn-process-braindump error:', err)
       setHistory(prev => prev.map(h => h.id === jobId ? { ...h, status: 'failed', errors: [err?.message ?? 'Processing failed'] } : h))
@@ -222,7 +258,7 @@ export default function BraindumpPage() {
           categories,
           transcript: full,
           status: 'extracting',
-          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
           noteContent: categories.includes('Notes') ? full : undefined,
         }, ...prev])
         runExtraction(job.id, session)
@@ -238,7 +274,7 @@ export default function BraindumpPage() {
           categories,
           transcript: full,
           status: 'done',
-          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], logs: [], errors: [],
+          created: [], merged: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], logs: [], errors: [],
           noteContent: full,
         }, ...prev])
       }
@@ -333,9 +369,22 @@ export default function BraindumpPage() {
             debugOpen={openDebugId === entry.id}
             onToggleDebug={() => setOpenDebugId(id => id === entry.id ? null : entry.id)}
             onReprompt={instruction => handleReprompt(entry, instruction)}
+            onReviewContacts={() => setReviewJobId(entry.id)}
           />
         ))}
       </div>
+
+      {reviewJobId && (() => {
+        const entry = history.find(h => h.id === reviewJobId)
+        if (!entry || entry.pendingContacts.length === 0) return null
+        return (
+          <ResolveContactsModal
+            pending={entry.pendingContacts}
+            onClose={() => setReviewJobId(null)}
+            onResolved={res => handleContactsResolved(reviewJobId, res)}
+          />
+        )
+      })()}
 
       {deleteCandidates.length > 0 && (
         <DeleteTasksModal
@@ -348,11 +397,12 @@ export default function BraindumpPage() {
   )
 }
 
-function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt }: {
+function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt, onReviewContacts }: {
   entry: HistoryEntry
   debugOpen: boolean
   onToggleDebug: () => void
   onReprompt: (instruction: string) => void
+  onReviewContacts: () => void
 }) {
   const [reprompt, setReprompt] = useState('')
   const [reprompting, setReprompting] = useState(false)
@@ -392,6 +442,19 @@ function HistoryCard({ entry, debugOpen, onToggleDebug, onReprompt }: {
             emptyMsg="No contacts found."
             link={{ href: '/contacts', label: 'View contacts →' }}
           />
+        )}
+
+        {entry.pendingContacts.length > 0 && (
+          <button
+            type="button"
+            onClick={onReviewContacts}
+            className="w-full flex items-center justify-between rounded-xl border border-orange-700/60 bg-orange-950/20 px-4 py-3 text-left hover:bg-orange-950/40 transition-colors"
+          >
+            <span className="text-xs text-orange-400">
+              ⚠ {entry.pendingContacts.length} contact{entry.pendingContacts.length === 1 ? '' : 's'} match existing names — not saved yet
+            </span>
+            <span className="text-xs font-medium text-orange-300">Resolve →</span>
+          </button>
         )}
 
         {entry.categories.includes('Notes') && entry.noteContent && (

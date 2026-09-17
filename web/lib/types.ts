@@ -102,8 +102,18 @@ export interface BraindumpJobResult {
   contactsCreated: string[]
   contactsUpdated?: string[]
   interactionsLogged?: ContactInteractionLogged[]
+  pendingContacts?: PendingContact[]
   logs: string[]
   errors: string[]
+}
+
+// A contact the braindump extracted whose name collides with existing contact(s).
+// Not written to the DB until the user picks a target in ResolveContactsModal.
+export interface PendingContact {
+  name: string
+  fields: Record<string, string>
+  interaction: { type: 'met' | 'message_sent'; date: string; summary: string | null } | null
+  matches: { id: string; name: string; title: string | null; location: string | null }[]
 }
 
 export interface ContactInteractionLogged {

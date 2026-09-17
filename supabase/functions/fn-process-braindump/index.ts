@@ -105,6 +105,17 @@ const contactsTool = {
   },
 }
 
+// "Mark" ⊂ "Mark Sampelo" counts as a match; so does exact (case/punct-insensitive) equality.
+function nameTokens(name: string): string[] {
+  return name.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
+}
+function namesCollide(a: string, b: string): boolean {
+  const ta = nameTokens(a), tb = nameTokens(b)
+  if (ta.length === 0 || tb.length === 0) return false
+  const subset = (x: string[], y: string[]) => x.every(t => y.includes(t))
+  return subset(ta, tb) || subset(tb, ta)
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
   const dot = a.reduce((sum, v, i) => sum + v * b[i], 0)
   const magA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0))
@@ -120,7 +131,15 @@ interface Outcome {
   contactsCreated: string[]
   contactsUpdated: string[]
   interactionsLogged: { name: string; type: string; date: string }[]
+  pendingContacts: PendingContact[]
   log: string[]
+}
+
+interface PendingContact {
+  name: string
+  fields: Record<string, string>
+  interaction: { type: string; date: string; summary: string | null } | null
+  matches: { id: string; name: string; title: string | null; location: string | null }[]
 }
 
 async function processJob(job: { id: string; user_id: string; raw_transcript: string; categories: string[] | null }): Promise<Outcome> {
@@ -129,7 +148,7 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
 
   const categories = job.categories?.length ? job.categories : ['Tasks']
   trace(`job ${job.id} — categories: ${categories.join(', ')} — transcript: "${job.raw_transcript.slice(0, 100)}${job.raw_transcript.length > 100 ? '…' : ''}"`)
-  const outcome: Outcome = { created: [], merged: [], duplicates: [], pendingDeletions: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], log }
+  const outcome: Outcome = { created: [], merged: [], duplicates: [], pendingDeletions: [], contactsCreated: [], contactsUpdated: [], interactionsLogged: [], pendingContacts: [], log }
 
   try {
     await supabase
@@ -151,11 +170,11 @@ async function processJob(job: { id: string; user_id: string; raw_transcript: st
 
     const tools = wantsContacts ? [tasksTool, contactsTool] : [tasksTool]
 
-    let existingContacts: { id: string; name: string; title: string | null }[] = []
+    let existingContacts: { id: string; name: string; title: string | null; location: string | null }[] = []
     if (wantsContacts) {
       const { data } = await supabase
         .from('contacts')
-        .select('id, name, title')
+        .select('id, name, title, location')
         .eq('user_id', job.user_id)
       existingContacts = data ?? []
       trace(`existing contacts in DB: ${existingContacts.length}`)
@@ -287,6 +306,31 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
       const { interaction, existing_id, ...fields } = c
       let contactId: string | null = null
 
+      // Server-side name collision check, independent of what the model chose.
+      // Only an unambiguous case (exactly one same-name row, and the model pointed at it)
+      // is written automatically; anything else is handed back to the user to resolve.
+      const nameMatches = existingContacts.filter(e => namesCollide(e.name, c.name!))
+      const unambiguous = nameMatches.length === 0 || (nameMatches.length === 1 && existing_id === nameMatches[0].id)
+      if (!unambiguous) {
+        const cleanFields: Record<string, string> = {}
+        for (const [k, v] of Object.entries(fields)) if (k !== 'name' && typeof v === 'string' && v) cleanFields[k] = v
+        const pend: PendingContact = {
+          name: c.name,
+          fields: cleanFields,
+          interaction: interaction?.type
+            ? {
+                type: interaction.type === 'message_sent' ? 'message_sent' : 'met',
+                date: interaction.date && /^\d{4}-\d{2}-\d{2}$/.test(interaction.date) ? interaction.date : today,
+                summary: interaction.summary ?? null,
+              }
+            : null,
+          matches: nameMatches.map(m => ({ id: m.id, name: m.name, title: m.title, location: m.location })),
+        }
+        trace(`name collision for "${c.name}" — ${nameMatches.length} existing row(s) (${nameMatches.map(m => m.name).join(', ')}); model existing_id=${existing_id ?? 'none'} → pending user review`)
+        outcome.pendingContacts.push(pend)
+        continue
+      }
+
       if (existing_id && existingIds.has(existing_id)) {
         const { data: current, error: fetchErr } = await supabase
           .from('contacts')
@@ -362,7 +406,7 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
       .update({ processing_status: 'done', result: outcome })
       .eq('id', job.id)
 
-    trace(`done — created ${outcome.created.length}, merged ${outcome.merged.length}, contacts +${outcome.contactsCreated.length} ~${outcome.contactsUpdated.length}, interactions ${outcome.interactionsLogged.length}`)
+    trace(`done — created ${outcome.created.length}, merged ${outcome.merged.length}, contacts +${outcome.contactsCreated.length} ~${outcome.contactsUpdated.length} ?${outcome.pendingContacts.length}, interactions ${outcome.interactionsLogged.length}`)
   } catch (e: any) {
     const msg = e?.message ?? String(e)
     trace(`JOB FAILED: ${msg}`)
@@ -406,6 +450,7 @@ Deno.serve(async (req) => {
   const contactsCreated: string[] = []
   const contactsUpdated: string[] = []
   const interactionsLogged: Outcome['interactionsLogged'] = []
+  const pendingContacts: (PendingContact & { jobId: string })[] = []
   const logs: string[] = []
   const errors: string[] = []
   for (let i = 0; i < jobs.length; i++) {
@@ -423,11 +468,12 @@ Deno.serve(async (req) => {
       contactsCreated.push(...(v?.contactsCreated ?? []))
       contactsUpdated.push(...(v?.contactsUpdated ?? []))
       interactionsLogged.push(...(v?.interactionsLogged ?? []))
+      pendingContacts.push(...(v?.pendingContacts ?? []).map(pc => ({ ...pc, jobId: jobs[i].id })))
       logs.push(...(v?.log ?? []))
     }
   }
 
-  return new Response(JSON.stringify({ processed: jobs.length, created, merged, pendingDeletions, contactsCreated, contactsUpdated, interactionsLogged, logs, errors }), {
+  return new Response(JSON.stringify({ processed: jobs.length, created, merged, pendingDeletions, contactsCreated, contactsUpdated, interactionsLogged, pendingContacts, logs, errors }), {
     headers: { ...cors, 'Content-Type': 'application/json' },
   })
 })

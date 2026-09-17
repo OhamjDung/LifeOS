@@ -199,11 +199,13 @@ web/lib/
   types.ts                       # all shared TypeScript types (Task, Subtask, PersistedTaskGroup, FocusSession, SessionTask, ...)
   sessionTimer.ts                # remainingSeconds() / formatMMSS() — wall-clock timer math for focus sessions
   taskSelection.tsx              # TaskSelectionProvider + useTaskSelection() — which task the B-screen detail pane shows
+  contactMerge.ts                # applyPendingContact() — client-side insert/update + contact_events write, mirrors edge fn merge policy
 web/components/
   NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / SESSION / DUMP / NOTES / PEOPLE (TODAY/dashboard tab removed)
   TaskList.tsx                   # A screen: add/complete/rollover/delete, "Keep in Touch" section, drag-to-reorder + drag between groups, priority mode, persisted group view (calls fn-group-tasks), nested subtasks
   TaskDetailPane.tsx             # B screen: selected task's description + subtasks editor
   DeleteTasksModal.tsx           # bulk-delete confirm
+  ResolveContactsModal.tsx       # braindump: pick which same-name contact to update (or create new) for pendingContacts
   DashboardUpNext.tsx            # dashboard "up next" task strip
   SessionTaskPanel.tsx           # /session/[id]: link/create/complete/unlink tasks, check off subtasks
   EndSessionModal.tsx            # keep/discard session-created tasks, then ends session
@@ -292,6 +294,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 - When creating contacts, write both: `contact_tier` (user-selected frequency) + `relationship_tier: 'friend'` (default, for AI drafts).
 - `contacts` structured profile fields (migrations_v6.sql, all nullable TEXT): `title`, `education`, `location`, `email`, `phone`, `linkedin`, `why_good_contact`, `less_useful_for`, `rating`, `next_step` — shown on `/contacts/[id]` (`ContactProfile` component in `page.tsx`) and editable on `/contacts/new`. Populated manually or auto-extracted by `fn-process-braindump` when the "Contacts" category is checked on `/braindump`.
 - **Braindump contact update rules** (`fn-process-braindump`): user's existing `contacts (id, name, title)` are passed in the prompt; model sets `existing_id` on a match. Update merge policy: `title/education/location/email/phone/linkedin/next_step/tiers` **overwrite**; `why_good_contact/less_useful_for/rating` **append** as a new line; `how_we_met` only set if empty. Hallucinated `existing_id` (not in user's list) falls back to insert. Optional `interaction {type: met|message_sent, date, summary}` → inserts `contact_events` with explicit `created_at = <date>T12:00:00Z` so `trg_last_contacted` backdates `last_contacted_at` correctly. Model told past-tense only; planned contact goes to `next_step`/tasks.
+- **Duplicate-name gate** (server-side, ignores model's choice): `namesCollide()` — case/punct-insensitive, token-subset match ("Mark" ⊂ "Mark Deniel Sampelo"). Auto-write only if 0 collisions, or exactly 1 collision AND model's `existing_id` points at it. Otherwise nothing is written; the extracted contact goes to `result.pendingContacts[] {name, fields, interaction, matches[]}`. `/braindump` auto-opens `ResolveContactsModal` (pick "Update → X" per match or "Create new"); card shows "⚠ N contacts match existing names — Resolve →" until handled. Resolution writes happen **client-side** via `web/lib/contactMerge.ts` (`applyPendingContact`, same merge policy as the edge fn) and then `pendingContacts` is cleared in `braindump_jobs.result` so it doesn't re-prompt after reload.
 - `braindump_jobs.result` (migrations_v6.sql, JSONB): snapshot of `{created, merged, pendingDeletions, contactsCreated, contactsUpdated, interactionsLogged, logs, errors}` written by `fn-process-braindump` on both success and failure. Lets the `/braindump` history feed survive a page reload without re-running anything — read back via `jobToEntry()` in `web/app/(app)/braindump/page.tsx`.
 - `tasks.description` (v4), `tasks.is_priority` (v5), `tasks.group_id → task_groups` (v9, `on delete set null`).
 - `subtasks` (v4): `task_id`, `title`, `group_name`, `status`, `sort_order`; `parent_subtask_id` self-FK (v9, `on delete cascade`) for infinite nesting.
