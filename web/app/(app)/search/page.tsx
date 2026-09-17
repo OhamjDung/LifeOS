@@ -52,7 +52,7 @@ export default function SearchPage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-4 sm:p-8 max-w-3xl">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-white">Search notes</h2>
         <p className="text-gray-400 text-sm mt-1">Semantic search across your knowledge base.</p>

@@ -16,7 +16,7 @@ export default async function NotesPage() {
   const pendingCount = notes.filter(n => n.processing_status === 'pending' || n.processing_status === 'processing').length
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-4 sm:p-8 max-w-4xl">
       <NotesPendingChecker pendingCount={pendingCount} />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-white">Notes</h2>

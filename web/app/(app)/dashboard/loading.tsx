@@ -1,6 +1,6 @@
 export default function DashboardLoading() {
   return (
-    <div className="flex h-screen">
+    <div className="flex flex-col lg:flex-row lg:h-screen">
       <div
         className="flex-1 p-8"
         style={{ borderRight: '1px solid rgba(28,26,20,0.1)' }}

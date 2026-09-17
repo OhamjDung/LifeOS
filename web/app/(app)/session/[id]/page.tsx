@@ -78,8 +78,8 @@ export default function SessionDetailPage() {
     })
   }
 
-  if (!loaded) return <div className="p-8 text-gray-400 text-sm">Loading…</div>
-  if (!session) return <div className="p-8 text-gray-400 text-sm">Session not found.</div>
+  if (!loaded) return <div className="p-4 sm:p-8 text-gray-400 text-sm">Loading…</div>
+  if (!session) return <div className="p-4 sm:p-8 text-gray-400 text-sm">Session not found.</div>
 
   const isPaused = session.phase !== 'idle' && !session.phase_started_at
   const bg = session.phase === 'work' ? WORK_BG : session.phase === 'break' ? BREAK_BG : IDLE_BG
@@ -87,7 +87,7 @@ export default function SessionDetailPage() {
   const atZero = remaining <= 0
 
   return (
-    <div className="min-h-full p-8 transition-colors duration-500" style={{ background: bg, color: fg }}>
+    <div className="min-h-full p-4 sm:p-8 transition-colors duration-500" style={{ background: bg, color: fg }}>
       {saveError && <p role="alert" className="mb-3">{saveError}</p>}
       <div className="flex items-center justify-between mb-8">
         <button onClick={() => router.push('/session')} className="text-sm opacity-70 hover:opacity-100">

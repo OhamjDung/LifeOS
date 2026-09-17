@@ -18,7 +18,7 @@ export default async function NoteDetailPage({ params }: { params: Promise<{ id:
   const note = data as Note
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-4 sm:p-8 max-w-3xl">
       <div className="flex items-center gap-4 mb-6">
         <Link href="/notes" className="text-gray-500 hover:text-gray-300 text-sm">
           ← Notes

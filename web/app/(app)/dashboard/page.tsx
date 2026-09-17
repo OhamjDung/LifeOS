@@ -50,7 +50,7 @@ export default async function DashboardPage() {
   })
 
   return (
-    <div className="flex h-screen">
+    <div className="flex flex-col lg:flex-row lg:h-screen">
       {/* Left: Tasks */}
       <div
         className="flex-1 p-8 overflow-y-auto"
@@ -63,7 +63,7 @@ export default async function DashboardPage() {
 
         {/* LCD metrics */}
         <div
-          className="grid grid-cols-3 rounded-2xl overflow-hidden mb-8"
+          className="grid grid-cols-1 sm:grid-cols-3 rounded-2xl overflow-hidden mb-8"
           style={{ background: '#2A2F29', border: '1px solid rgba(28,26,20,0.2)' }}
         >
           {(

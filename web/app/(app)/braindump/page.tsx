@@ -299,7 +299,7 @@ export default function BraindumpPage() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen">
       {/* Left: form */}
-      <div className="w-full lg:w-1/2 shrink-0 p-8 overflow-y-auto" style={{ borderRight: '1px solid rgba(28,26,20,0.1)' }}>
+      <div className="w-full lg:w-1/2 shrink-0 p-4 sm:p-8 overflow-y-auto" style={{ borderRight: '1px solid rgba(28,26,20,0.1)' }}>
         <div className="mb-8 max-w-lg">
           <h2 className="text-2xl font-bold text-white">Empty your head.</h2>
           <p className="text-gray-400 text-sm mt-1">Speak or type freely.</p>
@@ -366,7 +366,7 @@ export default function BraindumpPage() {
       </div>
 
       {/* Right: history feed */}
-      <div className="w-full lg:w-1/2 p-8 overflow-y-auto min-w-0 space-y-4">
+      <div className="w-full lg:w-1/2 p-4 sm:p-8 overflow-y-auto min-w-0 space-y-4">
         <h3 className="text-lg font-bold text-white">History</h3>
         {historyLoaded && history.length === 0 && (
           <p className="text-gray-700 text-sm">Results appear here after submit.</p>

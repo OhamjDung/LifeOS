@@ -39,7 +39,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const isOverdue = daysSince === null || daysSince > tierDays
 
   return (
-    <div className="p-8 max-w-2xl">
+    <div className="p-4 sm:p-8 max-w-2xl">
       <div className="flex items-center gap-4 mb-8">
         <Link href="/contacts" className="text-gray-500 hover:text-gray-300 text-sm">
           ← Contacts
@@ -101,7 +101,7 @@ function ContactProfile({ contact }: { contact: Contact }) {
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900 p-5 mb-6 space-y-4">
       {facts.length > 0 && (
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
           {facts.map(([label, value]) => (
             <div key={label}>
               <p className="text-xs text-gray-600 uppercase tracking-wider mb-0.5">{label}</p>

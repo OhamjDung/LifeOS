@@ -63,7 +63,7 @@ export default function NewContactPage() {
   }
 
   return (
-    <div className="p-8 max-w-lg">
+    <div className="p-4 sm:p-8 max-w-lg">
       <div className="flex items-center gap-4 mb-8">
         <button onClick={() => router.back()} className="text-gray-500 hover:text-gray-300 text-sm">
           ← Back
@@ -84,7 +84,7 @@ export default function NewContactPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-sm text-gray-400 mb-1.5">Title</label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="Role, company"
@@ -142,7 +142,7 @@ export default function NewContactPage() {
             className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-sm text-gray-400 mb-1.5">Rating / debrief</label>
             <input type="text" value={rating} onChange={e => setRating(e.target.value)} placeholder="How the meeting went"

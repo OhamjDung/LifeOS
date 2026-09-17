@@ -67,7 +67,7 @@ export default function NewNotePage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-4 sm:p-8 max-w-3xl">
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={() => router.back()}
