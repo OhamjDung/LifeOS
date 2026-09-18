@@ -21,7 +21,8 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
       .select('*, task:tasks(*)')
       .eq('session_id', sessionId)
       .order('added_at', { ascending: true })
-    const rows = (data as SessionTask[]) ?? []
+    const rows = ((data as SessionTask[]) ?? [])
+      .sort((a, b) => Number(a.task?.status === 'done') - Number(b.task?.status === 'done'))
     setSessionTasks(rows)
     setLoaded(true)
 
@@ -41,10 +42,13 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
   }
 
   async function loadAllTasks() {
+    // All pending tasks + tasks completed today (so a tick can be undone without
+    // the row vanishing, and the list doesn't grow with every done task ever).
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
     const { data } = await supabase
       .from('tasks')
       .select('*')
-      .eq('status', 'pending')
+      .or(`status.eq.pending,and(status.eq.done,updated_at.gte.${todayStart.toISOString()})`)
       .order('due_date', { ascending: true })
     setAllTasks((data as Task[]) ?? [])
     setAllTasksLoaded(true)
@@ -144,6 +148,7 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
   const addableTasks = allTasks
     .filter(t => !linkedIds.has(t.id))
     .filter(t => !query || t.title.toLowerCase().includes(query))
+    .sort((a, b) => Number(a.status === 'done') - Number(b.status === 'done'))
 
   return (
     <div className="max-w-xl mx-auto mt-4">
@@ -256,33 +261,40 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
       {!allTasksLoaded ? (
         <p className="text-xs opacity-60">Loading…</p>
       ) : addableTasks.length === 0 ? (
-        <p className="text-xs italic opacity-60">No more pending tasks to add.</p>
+        <p className="text-xs italic opacity-60">No more tasks to add.</p>
       ) : (
         <div className="space-y-1.5">
-          {addableTasks.map(t => (
-            <div
-              key={t.id}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-black/5 transition-colors"
-              style={{ borderColor }}
-            >
-              {/* Same check circle as the linked rows — marks the task done on the main board without linking it. */}
-              <button
-                onClick={() => toggleTaskDone(t)}
-                title="Mark done"
-                aria-label={`Mark "${t.title}" done`}
-                className="w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors hover:border-indigo-400"
+          {addableTasks.map(t => {
+            const isDone = t.status === 'done'
+            return (
+              <div
+                key={t.id}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-black/5 transition-colors ${isDone ? 'opacity-60' : ''}`}
                 style={{ borderColor }}
-              />
-              <button
-                onClick={() => addExistingTask(t)}
-                title="Add to session"
-                className="flex-1 text-left text-sm"
               >
-                {t.title}
-              </button>
-              <span className="text-[10px] uppercase tracking-wide opacity-40">+ add</span>
-            </div>
-          ))}
+                {/* Same check circle as the linked rows — marks the task done on the main board without linking it. */}
+                <button
+                  onClick={() => toggleTaskDone(t)}
+                  title={isDone ? 'Mark pending' : 'Mark done'}
+                  aria-label={`Mark "${t.title}" ${isDone ? 'pending' : 'done'}`}
+                  className={`w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
+                    isDone ? 'bg-indigo-600 border-indigo-600' : 'hover:border-indigo-400'
+                  }`}
+                  style={{ borderColor: isDone ? undefined : borderColor }}
+                >
+                  {isDone && <span className="text-[#DEDAD2] text-[9px] leading-none">✓</span>}
+                </button>
+                <button
+                  onClick={() => addExistingTask(t)}
+                  title="Add to session"
+                  className={`flex-1 text-left text-sm ${isDone ? 'line-through' : ''}`}
+                >
+                  {t.title}
+                </button>
+                <span className="text-[10px] uppercase tracking-wide opacity-40">+ add</span>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
