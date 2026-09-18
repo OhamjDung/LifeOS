@@ -260,14 +260,28 @@ export function SessionTaskPanel({ sessionId, textColor }: { sessionId: string; 
       ) : (
         <div className="space-y-1.5">
           {addableTasks.map(t => (
-            <button
+            <div
               key={t.id}
-              onClick={() => addExistingTask(t)}
-              className="w-full text-left text-sm px-3 py-2 rounded-lg border hover:bg-black/5 transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border hover:bg-black/5 transition-colors"
               style={{ borderColor }}
             >
-              {t.title}
-            </button>
+              {/* Same check circle as the linked rows — marks the task done on the main board without linking it. */}
+              <button
+                onClick={() => toggleTaskDone(t)}
+                title="Mark done"
+                aria-label={`Mark "${t.title}" done`}
+                className="w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors hover:border-indigo-400"
+                style={{ borderColor }}
+              />
+              <button
+                onClick={() => addExistingTask(t)}
+                title="Add to session"
+                className="flex-1 text-left text-sm"
+              >
+                {t.title}
+              </button>
+              <span className="text-[10px] uppercase tracking-wide opacity-40">+ add</span>
+            </div>
           ))}
         </div>
       )}
