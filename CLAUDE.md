@@ -196,7 +196,9 @@ web/app/
   (app)/dashboard/page.tsx       # LCD metrics panel + overdue contacts + DashboardUpNext — still exists as a route, but no longer in nav; post-login redirect goes to /tasks instead
   (app)/tasks/page.tsx           # 50/50 split: A screen (left) = TaskList, B screen (right) = calendar grid / TaskDetailPane (selected via TaskSelectionProvider); searchParams m/y/d for month+day selection
   (app)/calendar/page.tsx        # standalone calendar (still exists; tasks page embeds calendar too)
-  (app)/session/page.tsx         # active focus sessions list + new-session form (client component)
+  (app)/plan/page.tsx            # Planner BOARD: year-goal strip + month kanban (MonthBoard)
+  (app)/plan/[month]/page.tsx    # week kanban for YYYY-MM (WeekBoard) — pinned month goals w/ linked-count bars
+  (app)/session/page.tsx         # active focus sessions list + new-session form + × delete per card (inline confirm; cascades session_tasks/rounds, tasks stay)
   (app)/session/[id]/page.tsx    # focus session timer — phase-colored full-screen, SessionTaskPanel, End/Lockin modals (client component, useParams)
   (app)/braindump/page.tsx       # 50/50 split: form left, right = persisted history feed (one card per past dump, newest first, loaded from braindump_jobs.result so it survives reload). Each card has its own "🔍 Debug reasoning" panel and its own reprompt/adjust box (reprompting creates a new card, doesn't mutate the old one)
   (app)/notes/                   # list (with filter bar), new, [id]
@@ -205,11 +207,14 @@ web/app/
 web/lib/
   supabase/{client,server,middleware}.ts
   types.ts                       # all shared TypeScript types (Task, Subtask, PersistedTaskGroup, FocusSession, SessionTask, ...)
+  planDates.ts                   # local YYYY-MM-DD month/week math (weeksOfMonth, mondayOf, addMonths…) — never toISOString (UTC shift)
+  planGoals.ts                   # category colors, STATUS_META, reorderColumn() for kanban drops
   sessionTimer.ts                # remainingSeconds() / formatMMSS() — wall-clock timer math for focus sessions
   taskSelection.tsx              # TaskSelectionProvider + useTaskSelection() — which task the B-screen detail pane shows
   contactMerge.ts                # applyPendingContact() — client-side insert/update + contact_events write, mirrors edge fn merge policy
 web/components/
-  NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / SESSION / DUMP / NOTES / PEOPLE (TODAY/dashboard tab removed)
+  NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / PLAN / SESSION / DUMP / NOTES / PEOPLE (TODAY/dashboard tab removed)
+  plan/                          # MonthBoard, WeekBoard, BoardColumn, GoalCard, GoalEditor, usePlanGoals (optimistic CRUD + rollback)
   TaskList.tsx                   # A screen: add/complete/rollover/delete, "Keep in Touch" section, drag-to-reorder + drag between groups, priority mode, persisted group view (calls fn-group-tasks), nested subtasks
   TaskDetailPane.tsx             # B screen: selected task's description + subtasks editor
   DeleteTasksModal.tsx           # bulk-delete confirm
@@ -292,6 +297,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 **Tests** (no framework; run from repo root):
 - `node --test tests/ai-regressions.test.mjs` — transpiles the `_shared/*.ts` helpers + `web/lib/sessionTimer.ts` with the web app's TypeScript and asserts on chunking, group normalization, timer resume.
+- `node --test tests/planner.test.mjs` — `web/lib/planDates.ts` week/month math.
 - `tests/note-indexing.sql` — paste into SQL Editor / `execute_sql`; `begin … rollback` so it leaves nothing behind; asserts `finish_note_processing` rejects stale claims + bad vectors, keeps `category_locked`, and is not executable by `authenticated`.
 `fn-widget-data` and `fn-widget-action` use `widget_registrations.widget_id` as the auth credential (no JWT — widget can't store tokens).
 
@@ -352,8 +358,9 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | 20 — Focus sessions | ✅ Done — `/session` Pomodoro timer, session tasks, lockin rating per round, Skip Break, keep/discard on end |
 | 21 — Persisted task groups + infinite subtasks | ✅ Done — `task_groups` table, `group_id`, `parent_subtask_id`, drag between groups |
 | 22 — Quick notes widget | ✅ Done — global bottom-right tabbed scratchpad, hover open/close, localStorage drafts |
+| 23 — Rework (spec: `docs/superpowers/specs/2026-09-23-harness-planner-design.md`) | 🚧 Chunk 0 ✅ (session delete, press animations) · Chunk 1 ✅ Planner board · Chunk 2 Calendar/ICS · Chunk 3 Chat harness |
 
-**Migrations applied**: `migrations_v3.sql` through `migrations_v11.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed). All `.sql` files are committed.
+**Migrations applied**: `migrations_v3.sql` through `migrations_v12.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed, v12 `plan_goals`). All `.sql` files are committed.
 
 ## What's Working Right Now (Sep 2026)
 
@@ -394,3 +401,13 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 - **Contact import** — bulk add from CSV or phone contacts
 - **Recurring tasks** — `rrule` support for daily/weekly repeating tasks
 - **Notes-category dumps in braindump history** — currently only Tasks/Contacts dumps persist as history cards across reloads (backed by `braindump_jobs.result`); a Notes-only submission's card is client-state only and disappears on refresh (the note itself is still saved to the `notes` table, just not shown as a history card after reload)
+
+## Planner (`/plan`)
+
+`plan_goals` (v12) — one table for all levels: `level` year|month|week, `title`, `description`, `category` (free text; presets School/Career/Health/Social/Personal/Finance get fixed colors), `status` not_started|in_progress|done, `period_start`/`period_end` (year = Jan 1; month = 1st; week = Monday; `period_end` > start only for multi-month month goals), `parent_id` (week→month goal, month→year goal, `on delete set null`), `sort_order`.
+- A week belongs to the month its **Monday** is in (weeks Mon–Sun).
+- Month board: current month + 3 (`+ 3 more`), multi-month goals render in every column they cover; dragging shifts start+end by the same month delta. Hovering a year-goal chip highlights its month goals.
+- Week board: sidebar = this month's goals with linked-week-item counts + bars (0 = red, "not distributing evenly"); clicking a goal focuses it and quick-adds link to it.
+- Week items are NOT linked to tasks — they're context for the chat LLM (read-only for it).
+
+**Press feedback**: `globals.css` has a global `:active` scale for `button`, `[role=button]`, `.app-nav a`, `.btn-like`. It's unlayered, so its `transition-property` list must include color props or it'd override Tailwind `transition-colors`. Motion utilities: `animate-fade-in|slide-up|slide-in-right|pop|shrink-out`.

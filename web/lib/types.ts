@@ -228,3 +228,22 @@ export const CONTACT_TIER_LABEL: Record<ContactTier, string> = {
   biweekly: 'Biweekly',
   monthly: 'Monthly',
 }
+
+export type GoalLevel = 'year' | 'month' | 'week'
+export type GoalStatus = 'not_started' | 'in_progress' | 'done'
+
+export interface PlanGoal {
+  id: string
+  user_id: string
+  level: GoalLevel
+  title: string
+  description: string | null
+  category: string | null
+  status: GoalStatus
+  period_start: string // YYYY-MM-DD — year: Jan 1 · month: 1st · week: Monday
+  period_end: string   // == period_start unless a month goal spans months
+  parent_id: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
