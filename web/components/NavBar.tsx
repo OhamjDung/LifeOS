@@ -59,7 +59,16 @@ export function NavBar() {
         )
       })}
 
-      <div className="sm:mt-auto w-auto sm:w-full px-2">
+      <div className="sm:mt-auto w-auto sm:w-full px-2 flex flex-row sm:flex-col gap-0.5">
+        <Link
+          href="/settings"
+          aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
+          className="w-full flex flex-col items-center gap-0.5 py-3 rounded-lg transition-all"
+          style={{ color: pathname.startsWith('/settings') ? '#516439' : '#9E9890' }}
+        >
+          <span style={{ fontSize: 16, lineHeight: '20px' }}>⚙</span>
+          <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 8, letterSpacing: '0.5px' }}>SET</span>
+        </Link>
         <button
           onClick={logout}
           className="w-full flex flex-col items-center gap-0.5 py-3 rounded-lg transition-all"
