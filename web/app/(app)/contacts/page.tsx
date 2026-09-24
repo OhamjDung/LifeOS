@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Contact, CONTACT_TIER_DAYS } from '@/lib/types'
 import { LogContactButton } from '@/components/LogContactButton'
 import { ContactTierPicker } from '@/components/ContactTierPicker'
+import { ContactCategoryPicker } from '@/components/ContactCategoryPicker'
 import Link from 'next/link'
 
 export default async function ContactsPage() {
@@ -80,6 +81,7 @@ export default async function ContactsPage() {
                   <p className="font-medium text-white">{contact.name}</p>
                   <div className="flex items-center gap-2 mt-1">
                     <ContactTierPicker contactId={contact.id} tier={contact.contact_tier ?? 'weekly'} compact />
+                    <ContactCategoryPicker contactId={contact.id} category={contact.category ?? null} compact />
                     {contact.how_we_met && (
                       <span className="text-xs text-gray-600">· {contact.how_we_met}</span>
                     )}

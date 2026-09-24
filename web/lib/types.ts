@@ -2,6 +2,11 @@ export type TaskStatus = 'pending' | 'done' | 'rolled_over'
 export type TaskType = 'task' | 'event'
 export type RelationshipTier = 'family' | 'close_friend' | 'friend' | 'acquaintance'
 export type ContactTier = 'daily' | 'weekly' | 'biweekly' | 'monthly'
+export type ContactCategory = 'family' | 'work' | 'friend' | 'other'
+export const CONTACT_CATEGORIES: ContactCategory[] = ['family', 'work', 'friend', 'other']
+export const CONTACT_CATEGORY_COLOR: Record<ContactCategory, string> = {
+  family: '#A0668F', work: '#5E7AA6', friend: '#516439', other: '#8C7A4E',
+}
 export type ProcessingStatus = 'pending' | 'processing' | 'done' | 'failed'
 export type AppMode = 'home' | 'work' | 'car' | 'gym' | 'default'
 
@@ -164,6 +169,7 @@ export interface Contact {
   next_step: string | null
   relationship_tier: RelationshipTier
   contact_tier: ContactTier
+  category: ContactCategory | null
   last_contacted_at: string | null
   avatar_path: string | null
   created_at: string

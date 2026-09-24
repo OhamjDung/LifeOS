@@ -41,6 +41,7 @@ export interface TurnState {
 }
 
 const TIER_DAYS: Record<string, number> = { daily: 1, weekly: 7, biweekly: 14, monthly: 30 }
+const UPDATABLE_TASK_FIELDS = new Set(['title', 'due_date', 'is_priority', 'status', 'description', 'task_type'])
 const isYmd = (s: unknown): s is string => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
 const str = (v: unknown, max = 500) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined)
 
@@ -653,7 +654,10 @@ export async function applyProposal(ctx: Ctx, p: Proposal, choice?: string): Pro
       let n = 0
       for (const u of updates) {
         if (!alive.has(u.id)) continue // deleted since the proposal — skip quietly
-        const { error } = await admin.from('tasks').update({ ...u.patch, updated_at: now }).eq('id', u.id).eq('user_id', userId)
+        // Defense in depth: only the columns prepareUpdateTasks can produce ever reach the service-role update.
+        const patch = Object.fromEntries(Object.entries(u.patch).filter(([k]) => UPDATABLE_TASK_FIELDS.has(k)))
+        if (!Object.keys(patch).length) continue
+        const { error } = await admin.from('tasks').update({ ...patch, updated_at: now }).eq('id', u.id).eq('user_id', userId)
         if (error) throw new Error(error.message)
         n++
       }
@@ -703,7 +707,10 @@ export async function applyProposal(ctx: Ctx, p: Proposal, choice?: string): Pro
       if (interaction) {
         // Explicit created_at so trg_last_contacted backdates last_contacted_at to the real day.
         const { error } = await admin.from('contact_events').insert({
-          user_id: userId, contact_id: contactId, event_type: interaction.type, body: interaction.summary, created_at: `${interaction.date}T12:00:00Z`,
+          user_id: userId, contact_id: contactId,
+          event_type: interaction.type === 'message_sent' ? 'message_sent' : 'met',
+          body: interaction.summary,
+          created_at: `${isYmd(interaction.date) ? interaction.date : ctx.today}T12:00:00Z`,
         })
         if (error) throw new Error(error.message)
         verb += ` · logged ${interaction.type === 'met' ? 'meeting' : 'message'}`

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { Contact, ContactEvent, CONTACT_TIER_DAYS } from '@/lib/types'
 import { ContactTierPicker } from '@/components/ContactTierPicker'
+import { ContactCategoryPicker } from '@/components/ContactCategoryPicker'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ContactDetail } from '@/components/ContactDetail'
@@ -57,8 +58,9 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             {contact.relationship_tier.replace('_', ' ')}
             {contact.how_we_met && ` · met via ${contact.how_we_met}`}
           </p>
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <ContactTierPicker contactId={contact.id} tier={contact.contact_tier ?? 'weekly'} />
+            <ContactCategoryPicker contactId={contact.id} category={contact.category ?? null} />
           </div>
         </div>
       </div>

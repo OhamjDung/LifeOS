@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { ContactTier } from '@/lib/types'
+import { ContactTier, ContactCategory, CONTACT_CATEGORIES, CONTACT_CATEGORY_COLOR } from '@/lib/types'
 
 const CONTACT_TIERS: { value: ContactTier; label: string; sub: string }[] = [
   { value: 'daily',    label: 'Daily',    sub: 'every day' },
@@ -27,6 +27,7 @@ export default function NewContactPage() {
   const [rating, setRating] = useState('')
   const [nextStep, setNextStep] = useState('')
   const [tier, setTier] = useState<ContactTier>('weekly')
+  const [category, setCategory] = useState<ContactCategory | null>(null)
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
@@ -51,6 +52,7 @@ export default function NewContactPage() {
         next_step: nextStep.trim() || null,
         relationship_tier: 'friend',
         contact_tier: tier,
+        category,
         user_id: user?.id,
       })
       .select('id')
@@ -152,6 +154,28 @@ export default function NewContactPage() {
             <label className="block text-sm text-gray-400 mb-1.5">Next step</label>
             <input type="text" value={nextStep} onChange={e => setNextStep(e.target.value)} placeholder="Follow-up plan"
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-600 outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-1.5">Category</label>
+          <div className="flex flex-wrap gap-2">
+            {CONTACT_CATEGORIES.map(c => (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={category === c}
+                onClick={() => setCategory(category === c ? null : c)}
+                className="px-3 py-1.5 rounded-full border text-sm capitalize"
+                style={{
+                  borderColor: category === c ? CONTACT_CATEGORY_COLOR[c] : 'rgba(28,26,20,0.15)',
+                  background: category === c ? CONTACT_CATEGORY_COLOR[c] : 'transparent',
+                  color: category === c ? '#F3F1EA' : '#6B6358',
+                }}
+              >
+                {c}
+              </button>
+            ))}
           </div>
         </div>
 
