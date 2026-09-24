@@ -4,6 +4,7 @@ import { TaskList } from '@/components/TaskList'
 import { TaskDetailPane } from '@/components/TaskDetailPane'
 import { TaskSelectionProvider } from '@/lib/taskSelection'
 import { BScreen } from '@/components/BScreen'
+import { PopOutButton } from '@/components/session/PopOutButton'
 import { ScheduledTasksProvider } from '@/lib/scheduledTasks'
 
 export default async function TasksPage() {
@@ -45,11 +46,14 @@ export default async function TasksPage() {
         className="w-full lg:w-1/2 shrink-0 p-4 sm:p-6 overflow-y-auto"
         style={{ borderRight: '1px solid rgba(28,26,20,0.1)' }}
       >
-        <div className="mb-5">
-          <h2 className="text-xl font-bold text-white">Tasks</h2>
-          <p className="text-gray-400 text-xs mt-1">
-            {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
+        <div className="mb-5 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-white">Tasks</h2>
+            <p className="text-gray-400 text-xs mt-1">
+              {now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </p>
+          </div>
+          <PopOutButton />
         </div>
         <TaskList
           initialTasks={tasks}

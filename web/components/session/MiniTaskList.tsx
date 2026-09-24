@@ -118,7 +118,7 @@ export function MiniTaskList() {
         onChange={e => setDraft(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') add() }}
         placeholder="+ Add a task for today"
-        className="mt-2 w-full bg-[#EAE7E0] border border-gray-700 rounded-lg px-2.5 py-1.5 text-[13px] text-white placeholder-gray-500 outline-none focus:border-indigo-500"
+        className="mt-2 w-full bg-field border border-gray-700 rounded-lg px-2.5 py-1.5 text-[13px] text-white placeholder-gray-500 outline-none focus:border-indigo-500"
       />
     </div>
   )

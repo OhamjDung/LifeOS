@@ -12,7 +12,7 @@ import { playChime, soundEnabled } from './chime'
  * same session (the fallback popup is a separate window) via BroadcastChannel.
  * When a running phase reaches 0 it chimes once across all windows.
  */
-export function useFocusSession(sessionId: string, opts: { setTitle?: boolean } = {}) {
+export function useFocusSession(sessionId: string | null, opts: { setTitle?: boolean } = {}) {
   const [supabase] = useState(createClient)
   const [session, setSession] = useState<FocusSession | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -23,6 +23,7 @@ export function useFocusSession(sessionId: string, opts: { setTitle?: boolean } 
   const prevRemaining = useRef<number | null>(null)
 
   useEffect(() => {
+    if (!sessionId) return // no session: pop-out shows tasks/today only
     let cancelled = false
     supabase.from('sessions').select('*').eq('id', sessionId).maybeSingle().then(({ data }) => {
       if (cancelled) return
@@ -102,7 +103,7 @@ export function useFocusSession(sessionId: string, opts: { setTitle?: boolean } 
     await supabase.from('session_rounds').insert({ session_id: session.id, user_id: user?.id, round: session.round, lockin_rating: rating })
   }
 
-  return { session, loaded, remaining, saveError, pause, resume, startBreak, startNextRound, rateRound }
+  return { session: sessionId ? session : null, loaded: sessionId ? loaded : true, remaining, saveError, pause, resume, startBreak, startNextRound, rateRound }
 }
 
 /** Chime + desktop notification, once per phase across every open window. */
@@ -120,4 +121,20 @@ function onPhaseDone(s: FocusSession) {
       })
     } catch { /* some browsers only allow notifications from a service worker */ }
   }
+}
+
+/** Start a new focus session now (default 25/5) and return its id. */
+export async function createFocusSession(opts: { title?: string | null; work?: number; brk?: number } = {}): Promise<string> {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data, error } = await supabase.from('sessions').insert({
+    user_id: user?.id,
+    title: opts.title ?? null,
+    work_minutes: opts.work ?? 25,
+    break_minutes: opts.brk ?? 5,
+    phase: 'work',
+    phase_started_at: new Date().toISOString(),
+  }).select('id').single()
+  if (error || !data) throw new Error(error?.message ?? 'Could not start session')
+  return data.id as string
 }

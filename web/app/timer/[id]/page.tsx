@@ -1,19 +1,22 @@
 'use client'
 
-// Pop-out timer for browsers without Document Picture-in-Picture: a bare page
-// (outside the (app) layout — no nav) opened with window.open. Resize/move the
-// window freely; the clock scales with it. Syncs with the main tab via
-// BroadcastChannel (useFocusSession). Auth is enforced by proxy.ts + RLS.
+// Pop-out window for browsers without Document Picture-in-Picture: a bare page
+// (outside the (app) layout — no nav) opened with window.open. /timer/none = no
+// session (opened from /tasks). Resize/move the window freely; the clock scales
+// with it. Syncs with the main tab via BroadcastChannel (useFocusSession).
+// Auth is enforced by proxy.ts + RLS.
 
 import { useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { unlockAudio } from '@/lib/chime'
 import { useFocusSession } from '@/lib/useFocusSession'
 import { MiniTimer } from '@/components/session/MiniTimer'
 
 export default function TimerPopoutPage() {
   const { id } = useParams<{ id: string }>()
-  const timer = useFocusSession(id, { setTitle: true })
+  const router = useRouter()
+  const sessionId = id === 'none' ? null : id
+  const timer = useFocusSession(sessionId, { setTitle: !!sessionId })
 
   useEffect(() => {
     const unlock = () => unlockAudio()
@@ -21,8 +24,14 @@ export default function TimerPopoutPage() {
     return () => window.removeEventListener('pointerdown', unlock)
   }, [])
 
-  if (timer.loaded && !timer.session) {
+  if (sessionId && timer.loaded && !timer.session) {
     return <p style={{ padding: 16, fontFamily: 'monospace' }}>Session not found.</p>
   }
-  return <MiniTimer timer={timer} onClose={() => window.close()} />
+  return (
+    <MiniTimer
+      timer={timer}
+      onClose={() => window.close()}
+      onSessionStarted={newId => router.replace(`/timer/${newId}`)}
+    />
+  )
 }

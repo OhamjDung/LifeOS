@@ -20,7 +20,7 @@ export default function SessionDetailPage() {
   const sessionId = params.id
   const { session, loaded, remaining, saveError, pause, resume, startBreak, startNextRound } =
     useFocusSession(sessionId, { setTitle: true })
-  const { poppedId, popOut, closePopOut } = useFloatingTimer()
+  const { popped, popOut, closePopOut } = useFloatingTimer()
   const [showEndModal, setShowEndModal] = useState(false)
   const [showRatingModal, setShowRatingModal] = useState(false)
   const [sound, setSound] = useState(true)
@@ -46,7 +46,7 @@ export default function SessionDetailPage() {
   const bg = session.phase === 'work' ? WORK_BG : session.phase === 'break' ? BREAK_BG : IDLE_BG
   const fg = session.phase === 'work' ? '#DEDAD2' : '#1C1A14'
   const atZero = remaining <= 0
-  const poppedHere = poppedId === session.id
+  const poppedHere = popped?.sessionId === session.id
 
   return (
     <div className="min-h-full p-4 sm:p-8 transition-colors duration-500" style={{ background: bg, color: fg }}>

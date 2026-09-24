@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { formatMMSS } from '@/lib/sessionTimer'
-import { useFocusSession } from '@/lib/useFocusSession'
+import { createFocusSession, useFocusSession } from '@/lib/useFocusSession'
+import { createClient } from '@/lib/supabase/client'
 import { SessionTaskPanel } from '@/components/SessionTaskPanel'
 import { DayCalendar } from '@/components/calendar/DayCalendar'
 import { MiniTaskList } from './MiniTaskList'
@@ -33,7 +34,11 @@ function phaseColors(phase: string) {
  * global tasks, and today's schedule. The timer keeps running (and chimes) on
  * every tab; off the TIMER tab the countdown shows in the tab bar.
  */
-export function MiniTimer({ timer, onClose }: { timer: Timer; onClose?: () => void }) {
+export function MiniTimer({ timer, onClose, onSessionStarted }: {
+  timer: Timer
+  onClose?: () => void
+  onSessionStarted?: (sessionId: string) => void
+}) {
   const [tab, setTab] = useState<Tab>('timer')
   useEffect(() => {
     try {
@@ -43,32 +48,41 @@ export function MiniTimer({ timer, onClose }: { timer: Timer; onClose?: () => vo
   }, [])
   const choose = (t: Tab) => { setTab(t); try { localStorage.setItem('popoutTab', t) } catch {} }
 
-  const { session, remaining } = timer
-  if (!session) return <div style={{ padding: 16, fontFamily: 'monospace' }}>Loading…</div>
-  const { bg, fg } = phaseColors(session.phase)
-  const atZero = remaining <= 0 && !!session.phase_started_at
+  const { session, remaining, loaded } = timer
+  if (!loaded) return <div style={{ padding: 16, fontFamily: 'monospace' }}>Loading…</div>
+
+  // Everything in the window follows the session's phase: work = dark, break = light.
+  const { bg, fg } = phaseColors(session?.phase ?? 'idle')
+  const dark = session?.phase === 'work'
+  const atZero = !!session && remaining <= 0 && !!session.phase_started_at
+  const tabs = session ? TABS : TABS.filter(t => t.id !== 'session')
+  const current: Tab = !session && tab === 'session' ? 'timer' : tab
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden"
-      style={{ background: tab === 'timer' ? bg : '#CCCAC0', fontFamily: 'var(--font-ibm-plex-mono), "IBM Plex Mono", monospace' }}
+      className={`fixed inset-0 flex flex-col overflow-hidden transition-colors duration-500 ${dark ? 'theme-dark' : ''}`}
+      style={{ background: bg, color: fg, fontFamily: 'var(--font-ibm-plex-mono), "IBM Plex Mono", monospace' }}
     >
-      {/* Tab bar — phase-coloured so work/break is obvious from any tab */}
-      <div role="tablist" aria-label="Pop-out views" className="flex items-center gap-0.5 px-1 py-1 shrink-0 transition-colors duration-500" style={{ background: bg, color: fg }}>
-        {TABS.map(t => (
+      <div
+        role="tablist"
+        aria-label="Pop-out views"
+        className="flex items-center gap-0.5 px-1 py-1 shrink-0"
+        style={{ borderBottom: `1px solid ${dark ? 'rgba(222,218,210,0.12)' : 'rgba(28,26,20,0.1)'}` }}
+      >
+        {tabs.map(t => (
           <button
             key={t.id}
             role="tab"
-            aria-selected={tab === t.id}
+            aria-selected={current === t.id}
             onClick={() => choose(t.id)}
             className="px-2 py-1 rounded text-[10px] font-semibold tracking-wide"
-            style={{ background: tab === t.id ? (session.phase === 'work' ? 'rgba(222,218,210,0.16)' : 'rgba(28,26,20,0.1)') : 'transparent', opacity: tab === t.id ? 1 : 0.65 }}
+            style={{ background: current === t.id ? (dark ? 'rgba(222,218,210,0.14)' : 'rgba(28,26,20,0.1)') : 'transparent', opacity: current === t.id ? 1 : 0.65 }}
           >
             {t.label}
           </button>
         ))}
         <span className="flex-1" />
-        {tab !== 'timer' && (
+        {current !== 'timer' && session && (
           <button
             onClick={() => choose('timer')}
             title="Back to the timer"
@@ -78,20 +92,86 @@ export function MiniTimer({ timer, onClose }: { timer: Timer; onClose?: () => vo
           </button>
         )}
         {onClose && (
-          <button onClick={onClose} title="Dock back into the page" aria-label="Close pop-out" className="px-1.5 text-[12px] opacity-60 hover:opacity-100">⤢</button>
+          <button onClick={onClose} title="Close the pop-out" aria-label="Close pop-out" className="px-1.5 text-[12px] opacity-60 hover:opacity-100">⤢</button>
         )}
       </div>
 
       <div className="flex-1 min-h-0 relative">
-        {tab === 'timer' && <TimerFace timer={timer} />}
-        {tab === 'session' && (
-          <div className="absolute inset-0 overflow-y-auto px-3 pb-3" style={{ color: '#1C1A14' }}>
-            <SessionTaskPanel sessionId={session.id} textColor="#1C1A14" />
+        {current === 'timer' && (session ? <TimerFace timer={timer} /> : <StartSessionFace onStarted={onSessionStarted} />)}
+        {current === 'session' && session && (
+          <div className="absolute inset-0 overflow-y-auto px-3 pb-3">
+            <SessionTaskPanel sessionId={session.id} textColor={fg} />
           </div>
         )}
-        {tab === 'tasks' && <div className="absolute inset-0 p-3"><MiniTaskList /></div>}
-        {tab === 'today' && <div className="absolute inset-0 overflow-hidden p-2"><DayCalendar compact /></div>}
+        {current === 'tasks' && <div className="absolute inset-0 p-3"><MiniTaskList /></div>}
+        {current === 'today' && <div className="absolute inset-0 overflow-hidden p-2"><DayCalendar compact /></div>}
       </div>
+    </div>
+  )
+}
+
+/** No session yet (opened from /tasks): resume an active one or start a new one. */
+function StartSessionFace({ onStarted }: { onStarted?: (id: string) => void }) {
+  const [supabase] = useState(createClient)
+  const [active, setActive] = useState<{ id: string; title: string | null }[]>([])
+  const [title, setTitle] = useState('')
+  const [preset, setPreset] = useState<[number, number]>([25, 5])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    supabase.from('sessions').select('id,title').eq('status', 'active').order('created_at', { ascending: false }).limit(5)
+      .then(({ data }) => setActive((data as { id: string; title: string | null }[]) ?? []))
+  }, [supabase])
+
+  async function start() {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const id = await createFocusSession({ title: title.trim() || null, work: preset[0], brk: preset[1] })
+      onStarted?.(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="absolute inset-0 overflow-y-auto flex flex-col items-center justify-center gap-2 p-3 text-center">
+      <p className="text-[12px] font-semibold">No focus session running</p>
+      {active.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-1">
+          {active.map(a => (
+            <button key={a.id} onClick={() => onStarted?.(a.id)} className="px-2 py-1 rounded-md border border-gray-700 text-[11px] hover:bg-black/5">
+              ▶ {a.title || 'Untitled session'}
+            </button>
+          ))}
+        </div>
+      )}
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') start() }}
+        placeholder="New session title (optional)"
+        className="w-full max-w-xs bg-field border border-gray-700 rounded-lg px-2.5 py-1.5 text-[12px] text-white placeholder-gray-500 outline-none focus:border-indigo-500"
+      />
+      <div className="flex gap-1">
+        {([[25, 5], [50, 10], [90, 15]] as [number, number][]).map(p => (
+          <button
+            key={p[0]}
+            onClick={() => setPreset(p)}
+            aria-pressed={preset[0] === p[0]}
+            className={`px-2 py-1 rounded-md text-[11px] border ${preset[0] === p[0] ? 'bg-indigo-600 text-[#DEDAD2] border-transparent' : 'border-gray-700'}`}
+          >
+            {p[0]}/{p[1]}
+          </button>
+        ))}
+      </div>
+      <button onClick={start} disabled={busy} className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[#DEDAD2] text-[12px] font-semibold disabled:opacity-50">
+        {busy ? 'Starting…' : 'Start focus session'}
+      </button>
+      {error && <p role="alert" className="text-[11px] text-red-700">{error}</p>}
     </div>
   )
 }

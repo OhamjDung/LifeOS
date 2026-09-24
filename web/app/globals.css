@@ -3,6 +3,13 @@
 @theme inline {
   --font-sans: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
   --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+}
+
+/* Colors are a NON-inline @theme on purpose: utilities compile to var(--color-*),
+   so a subtree can re-theme by overriding the variables (see .theme-dark). */
+@theme {
+  /* Input/field surface (was bg-[#EAE7E0]) */
+  --color-field: #EAE7E0;
 
   /* Analog warm gray palette */
   --color-gray-950: #CCCAC0;
@@ -26,6 +33,40 @@
   --color-indigo-400: #516439;
   --color-indigo-300: #516439;
 }
+
+/* Calendar colors used in inline styles (WeekGrid) — themeable too. */
+:root {
+  --cal-ics-bg: #C9C6BD; --cal-ics-fg: #3A3430; --cal-ics-edge: #8C877C;
+  --cal-event-bg: #CDDBA6; --cal-event-fg: #2A3518;
+  --cal-line: rgba(28,26,20,0.08); --cal-dash: rgba(28,26,20,0.25);
+}
+
+/* Dark subtree (the pop-out during a work phase). Same class names, inverted warm palette. */
+.theme-dark {
+  color-scheme: dark;
+  --color-field: #2F2B24;
+  --color-gray-950: #1C1A14;
+  --color-gray-900: #2A2720;
+  --color-gray-800: #36322A;
+  --color-gray-700: #4A453B;
+  --color-gray-600: #8F887B;
+  --color-gray-500: #9E9789;
+  --color-gray-400: #B0A99C;
+  --color-gray-300: #C8C2B6;
+  --color-gray-200: #DAD5CB;
+  --color-white: #DEDAD2;
+  --color-indigo-950: #CDDBA6;
+  --color-indigo-900: #3A4A26;
+  --color-indigo-600: #6E8347;
+  --color-indigo-500: #9AAE6C;
+  --color-indigo-400: #9AAE6C;
+  --color-indigo-300: #9AAE6C;
+  --cal-ics-bg: #3A362E; --cal-ics-fg: #DAD5CB; --cal-ics-edge: #8F887B;
+  --cal-event-bg: #3A4A26; --cal-event-fg: #CDDBA6;
+  --cal-line: rgba(222,218,210,0.09); --cal-dash: rgba(222,218,210,0.25);
+  color: #DEDAD2;
+}
+.theme-dark .task-scheduled { background-color: #45403A; }
 
 body {
   background-color: #CCCAC0;

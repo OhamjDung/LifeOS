@@ -6,21 +6,24 @@ import { unlockAudio } from '@/lib/chime'
 import { useFocusSession } from '@/lib/useFocusSession'
 import { MiniTimer } from './MiniTimer'
 
-// Pop-out focus timer, hosted in (app)/layout so it survives navigating around
-// the app. Chrome/Edge: Document Picture-in-Picture — an always-on-top window you
-// can drag anywhere on screen and resize; rendered via a portal, so it's live
-// React. Other browsers: a regular popup window on /timer/[id].
+// Pop-out window, hosted in (app)/layout so it survives navigating around the
+// app. Chrome/Edge: Document Picture-in-Picture — an always-on-top window you can
+// drag anywhere on screen and resize; rendered via a portal, so it's live React.
+// Other browsers: a regular popup window on /timer/[id] (/timer/none = no session).
+// It can be opened for a focus session (from /session/[id]) or without one
+// (from /tasks) — then it shows TASKS / TODAY and can start a session.
 
 type DocPiP = { requestWindow: (o: { width: number; height: number }) => Promise<Window>; window: Window | null }
 const docPiP = (): DocPiP | null =>
   typeof window !== 'undefined' ? ((window as unknown as { documentPictureInPicture?: DocPiP }).documentPictureInPicture ?? null) : null
 
 interface Ctx {
-  poppedId: string | null
-  popOut: (sessionId: string) => Promise<void>
+  /** null = closed; { sessionId: null } = open without a session */
+  popped: { sessionId: string | null } | null
+  popOut: (sessionId: string | null) => Promise<void>
   closePopOut: () => void
 }
-const FloatingTimerContext = createContext<Ctx>({ poppedId: null, popOut: async () => {}, closePopOut: () => {} })
+const FloatingTimerContext = createContext<Ctx>({ popped: null, popOut: async () => {}, closePopOut: () => {} })
 export const useFloatingTimer = () => useContext(FloatingTimerContext)
 
 /** Copy the page's stylesheets + font classes so Tailwind works inside the PiP window. */
@@ -34,7 +37,7 @@ function cloneStyles(target: Window) {
 }
 
 export function FloatingTimerProvider({ children }: { children: ReactNode }) {
-  const [poppedId, setPoppedId] = useState<string | null>(null)
+  const [popped, setPopped] = useState<{ sessionId: string | null } | null>(null)
   const [pipWindow, setPipWindow] = useState<Window | null>(null)
   const [popup, setPopup] = useState<Window | null>(null)
 
@@ -50,52 +53,64 @@ export function FloatingTimerProvider({ children }: { children: ReactNode }) {
     popup?.close()
     setPipWindow(null)
     setPopup(null)
-    setPoppedId(null)
+    setPopped(null)
   }, [pipWindow, popup])
 
-  const popOut = useCallback(async (sessionId: string) => {
+  const popOut = useCallback(async (sessionId: string | null) => {
     unlockAudio()
-    pipWindow?.close()
+    // Already open as PiP: just switch what it shows.
+    if (pipWindow) { setPopped({ sessionId }); pipWindow.focus(); return }
     popup?.close()
     const pip = docPiP()
     if (pip) {
       try {
         const win = await pip.requestWindow({ width: 380, height: 320 })
         cloneStyles(win)
-        win.document.title = 'Focus timer'
+        win.document.title = 'LifeOS'
         win.addEventListener('pointerdown', () => unlockAudio())
-        win.addEventListener('pagehide', () => { setPipWindow(null); setPoppedId(null) }, { once: true })
+        win.addEventListener('pagehide', () => { setPipWindow(null); setPopped(null) }, { once: true })
         setPipWindow(win)
-        setPoppedId(sessionId)
+        setPopped({ sessionId })
         return
       } catch { /* dismissed / blocked — fall back to a popup */ }
     }
-    const w = window.open(`/timer/${sessionId}`, `lifeos-timer-${sessionId}`, 'popup,width=400,height=360')
+    const w = window.open(`/timer/${sessionId ?? 'none'}`, 'lifeos-popout', 'popup,width=400,height=360')
     if (w) {
       w.focus()
       setPopup(w)
-      setPoppedId(sessionId)
+      setPopped({ sessionId })
     }
   }, [pipWindow, popup])
 
   // Fallback popup: notice when the user closes it.
   useEffect(() => {
     if (!popup) return
-    const t = setInterval(() => { if (popup.closed) { setPopup(null); setPoppedId(null) } }, 1000)
+    const t = setInterval(() => { if (popup.closed) { setPopup(null); setPopped(null) } }, 1000)
     return () => clearInterval(t)
   }, [popup])
 
   return (
-    <FloatingTimerContext.Provider value={{ poppedId, popOut, closePopOut }}>
+    <FloatingTimerContext.Provider value={{ popped, popOut, closePopOut }}>
       {children}
-      {pipWindow && poppedId && (
-        <PipContent key={poppedId} sessionId={poppedId} target={pipWindow.document.body} onClose={closePopOut} />
+      {pipWindow && popped && (
+        <PipContent
+          key={popped.sessionId ?? 'none'}
+          sessionId={popped.sessionId}
+          target={pipWindow.document.body}
+          onClose={closePopOut}
+          onSessionStarted={id => setPopped({ sessionId: id })}
+        />
       )}
     </FloatingTimerContext.Provider>
   )
 }
 
-function PipContent({ sessionId, target, onClose }: { sessionId: string; target: HTMLElement; onClose: () => void }) {
+function PipContent({ sessionId, target, onClose, onSessionStarted }: {
+  sessionId: string | null
+  target: HTMLElement
+  onClose: () => void
+  onSessionStarted: (id: string) => void
+}) {
   const timer = useFocusSession(sessionId)
-  return createPortal(<MiniTimer timer={timer} onClose={onClose} />, target)
+  return createPortal(<MiniTimer timer={timer} onClose={onClose} onSessionStarted={onSessionStarted} />, target)
 }

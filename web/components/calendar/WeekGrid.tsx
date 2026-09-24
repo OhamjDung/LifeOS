@@ -214,9 +214,9 @@ export function WeekGrid({
                     title={it.title}
                     className={`text-[10px] leading-tight px-1.5 py-0.5 rounded truncate animate-fade-in ${it.done ? 'line-through opacity-50' : ''}`}
                     style={
-                      it.kind === 'ics' ? { background: '#C9C6BD', color: '#3A3430' }
-                      : it.kind === 'event' ? { background: '#CDDBA6', color: '#2A3518' }
-                      : { background: 'transparent', color: '#3A3430', border: '1px dashed rgba(28,26,20,0.25)' }
+                      it.kind === 'ics' ? { background: 'var(--cal-ics-bg)', color: 'var(--cal-ics-fg)' }
+                      : it.kind === 'event' ? { background: 'var(--cal-event-bg)', color: 'var(--cal-event-fg)' }
+                      : { background: 'transparent', color: 'var(--cal-ics-fg)', border: '1px dashed var(--cal-dash)' }
                     }
                   >
                     {it.title}
@@ -243,7 +243,7 @@ export function WeekGrid({
                 style={{
                   gridTemplateColumns: `repeat(${n}, 1fr)`,
                   height: 24 * HOUR_PX,
-                  backgroundImage: `repeating-linear-gradient(to bottom, rgba(28,26,20,0.08) 0 1px, transparent 1px ${HOUR_PX}px)`,
+                  backgroundImage: `repeating-linear-gradient(to bottom, var(--cal-line) 0 1px, transparent 1px ${HOUR_PX}px)`,
                 }}
                 onPointerDown={onGridPointerDown}
                 onPointerMove={onPointerMove}
@@ -264,7 +264,7 @@ export function WeekGrid({
                             key={item.key}
                             title={`${item.ev.title}\n${formatTime(item.ev.start)} – ${formatTime(item.ev.end)}${item.ev.location ? '\n' + item.ev.location : ''}`}
                             className="absolute rounded-md px-1.5 py-0.5 overflow-hidden text-[10px] leading-tight animate-fade-in"
-                            style={{ ...style, background: '#C9C6BD', color: '#3A3430', borderLeft: '3px solid #8C877C' }}
+                            style={{ ...style, background: 'var(--cal-ics-bg)', color: 'var(--cal-ics-fg)', borderLeft: '3px solid var(--cal-ics-edge)' }}
                           >
                             <div className="font-medium truncate">{item.ev.title}</div>
                             {height > 30 && <div className="opacity-70">{formatTime(item.ev.start)}</div>}

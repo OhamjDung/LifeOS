@@ -47,7 +47,7 @@ export function BlockEditor({
           onChange={e => setTitle(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save() }}
           placeholder="Title (optional — defaults to first task)"
-          className="w-full bg-[#EAE7E0] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-indigo-500"
+          className="w-full bg-field border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-indigo-500"
         />
         <div className="flex gap-2">
           {(Object.keys(BLOCK_COLORS) as BlockColor[]).map(c => (
