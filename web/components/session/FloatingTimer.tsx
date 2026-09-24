@@ -60,7 +60,7 @@ export function FloatingTimerProvider({ children }: { children: ReactNode }) {
     const pip = docPiP()
     if (pip) {
       try {
-        const win = await pip.requestWindow({ width: 340, height: 220 })
+        const win = await pip.requestWindow({ width: 380, height: 320 })
         cloneStyles(win)
         win.document.title = 'Focus timer'
         win.addEventListener('pointerdown', () => unlockAudio())
@@ -70,7 +70,7 @@ export function FloatingTimerProvider({ children }: { children: ReactNode }) {
         return
       } catch { /* dismissed / blocked — fall back to a popup */ }
     }
-    const w = window.open(`/timer/${sessionId}`, `lifeos-timer-${sessionId}`, 'popup,width=360,height=240')
+    const w = window.open(`/timer/${sessionId}`, `lifeos-timer-${sessionId}`, 'popup,width=400,height=360')
     if (w) {
       w.focus()
       setPopup(w)

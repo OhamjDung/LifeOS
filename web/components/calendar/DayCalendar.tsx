@@ -13,7 +13,7 @@ import { useCalendarData } from './useCalendarData'
  * Today-only time grid for the /tasks B screen. No task tray: rows in the
  * A-screen TaskList carry TASK_DRAG_TYPE, so they drop straight onto blocks.
  */
-export function DayCalendar() {
+export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
   const [today] = useState(() => ymd(new Date()))
   const {
     cal, calLoading, calError, loadCalendar, tasks, blocks, error, setError,
@@ -25,11 +25,17 @@ export function DayCalendar() {
   const active = blocks.find(b => b.id === openBlock)
 
   return (
-    <div className="space-y-3">
+    <div className={compact ? 'space-y-2' : 'space-y-3'}>
       <div className="flex items-center gap-2">
         <div className="flex-1">
-          <h2 className="text-xl font-bold text-white">Today</h2>
-          <p className="text-gray-400 text-xs mt-1">Drag tasks from the list onto a time block.</p>
+          {compact ? (
+            <p className="text-[11px] font-semibold tracking-wide text-gray-500">TODAY&apos;S SCHEDULE</p>
+          ) : (
+            <>
+              <h2 className="text-xl font-bold text-white">Today</h2>
+              <p className="text-gray-400 text-xs mt-1">Drag tasks from the list onto a time block.</p>
+            </>
+          )}
         </div>
         <span className="text-[10px] text-gray-500" aria-live="polite">
           {calLoading ? 'syncing…' : cal?.fetched_at ? `synced ${new Date(cal.fetched_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
@@ -51,7 +57,7 @@ export function DayCalendar() {
         events={cal?.events ?? []}
         tasks={tasks}
         blocks={blocks}
-        height="calc(100dvh - 190px)"
+        height={compact ? 'calc(100vh - 92px)' : 'calc(100dvh - 190px)'}
         onCreateBlock={createBlock}
         onUpdateBlock={updateBlock}
         onOpenBlock={setOpenBlock}
