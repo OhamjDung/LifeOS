@@ -75,7 +75,7 @@ export function MiniTaskList() {
         key={r.id}
         draggable={!isDone}
         onDragStart={e => e.dataTransfer.setData(TASK_DRAG_TYPE, JSON.stringify({ id: r.id, title: r.title }))}
-        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-900 border border-black/5 animate-fade-in ${isDone ? 'opacity-50' : ''}`}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-900 border border-black/5 animate-fade-in ${isDone ? 'opacity-50' : ''}`}
       >
         <button
           onClick={() => toggle(r)}
@@ -87,7 +87,7 @@ export function MiniTaskList() {
           {isDone && <span className="text-[#DEDAD2] text-[9px] leading-none">✓</span>}
         </button>
         {r.is_priority && <span className="text-[11px] text-yellow-600">★</span>}
-        <span className={`flex-1 min-w-0 truncate text-[13px] text-white ${isDone ? 'line-through' : ''}`}>{r.title}</span>
+        <span className={`flex-1 min-w-0 truncate text-[11px] text-white ${isDone ? 'line-through' : ''}`}>{r.title}</span>
         {r.rollover_count > 0 && !isDone && (
           <span className={`text-[10px] ${r.rollover_count >= 3 ? 'text-orange-600' : 'text-gray-500'}`}>↻{r.rollover_count}</span>
         )}
@@ -97,9 +97,6 @@ export function MiniTaskList() {
 
   return (
     <div className="flex flex-col h-full">
-      <p className="text-[11px] font-semibold tracking-wide text-gray-500 mb-2">
-        TODAY&apos;S TASKS <span className="font-normal">· {pending.length} left{done.length ? `, ${done.length} done` : ''}</span>
-      </p>
       <div className="flex-1 min-h-0 overflow-y-auto">
         {!loaded ? (
           <div className="space-y-1.5" aria-busy="true">{[0, 1, 2].map(i => <div key={i} className="h-8 rounded-lg bg-gray-900/70 animate-pulse" />)}</div>
@@ -118,7 +115,7 @@ export function MiniTaskList() {
         onChange={e => setDraft(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') add() }}
         placeholder="+ Add a task for today"
-        className="mt-2 w-full bg-field border border-gray-700 rounded-lg px-2.5 py-1.5 text-[13px] text-white placeholder-gray-500 outline-none focus:border-indigo-500"
+        className="mt-2 w-full min-w-0 bg-field border border-gray-700 rounded-lg px-2 py-1 text-[11px] text-white placeholder-gray-500 outline-none focus:border-indigo-500"
       />
     </div>
   )

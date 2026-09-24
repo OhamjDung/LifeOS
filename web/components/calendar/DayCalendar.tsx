@@ -26,16 +26,12 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
 
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
+      {/* Pop-out (compact): no header — every pixel goes to the grid. */}
+      {!compact && (
       <div className="flex items-center gap-2">
         <div className="flex-1">
-          {compact ? (
-            <p className="text-[11px] font-semibold tracking-wide text-gray-500">TODAY&apos;S SCHEDULE</p>
-          ) : (
-            <>
-              <h2 className="text-xl font-bold text-white">Today</h2>
-              <p className="text-gray-400 text-xs mt-1">Drag tasks from the list onto a time block.</p>
-            </>
-          )}
+          <h2 className="text-xl font-bold text-white">Today</h2>
+          <p className="text-gray-400 text-xs mt-1">Drag tasks from the list onto a time block.</p>
         </div>
         <span className="text-[10px] text-gray-500" aria-live="polite">
           {calLoading ? 'syncing…' : cal?.fetched_at ? `synced ${new Date(cal.fetched_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
@@ -49,6 +45,7 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
           ↻
         </button>
       </div>
+      )}
 
       <CalendarStatus cal={cal} calError={calError} error={error} onDismissError={() => setError(null)} />
 
@@ -57,7 +54,7 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
         events={cal?.events ?? []}
         tasks={tasks}
         blocks={blocks}
-        height={compact ? 'calc(100vh - 92px)' : 'calc(100dvh - 190px)'}
+        height={compact ? 'calc(100vh - 56px)' : 'calc(100dvh - 190px)'}
         onCreateBlock={createBlock}
         onUpdateBlock={updateBlock}
         onOpenBlock={setOpenBlock}

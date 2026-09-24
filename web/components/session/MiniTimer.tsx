@@ -99,11 +99,11 @@ export function MiniTimer({ timer, onClose, onSessionStarted }: {
       <div className="flex-1 min-h-0 relative">
         {current === 'timer' && (session ? <TimerFace timer={timer} /> : <StartSessionFace onStarted={onSessionStarted} />)}
         {current === 'session' && session && (
-          <div className="absolute inset-0 overflow-y-auto px-3 pb-3">
-            <SessionTaskPanel sessionId={session.id} textColor={fg} />
+          <div className="absolute inset-0 overflow-y-auto overflow-x-hidden px-2.5 pb-3">
+            <SessionTaskPanel sessionId={session.id} textColor={fg} compact />
           </div>
         )}
-        {current === 'tasks' && <div className="absolute inset-0 p-3"><MiniTaskList /></div>}
+        {current === 'tasks' && <div className="absolute inset-0 p-2.5"><MiniTaskList /></div>}
         {current === 'today' && <div className="absolute inset-0 overflow-hidden p-2"><DayCalendar compact /></div>}
       </div>
     </div>
