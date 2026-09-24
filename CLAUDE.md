@@ -370,9 +370,11 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 ## What's Working Right Now (Sep 2026)
 
-**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / SESSION / DUMP / NOTES / PEOPLE (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
+**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / PLAN / SESSION / DUMP / NOTES / PEOPLE + ⚙ SET (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
 - `/tasks` — 50/50 split: task list (drag reorder, drag between groups, Keep in Touch section, priority mode, persisted AI groups, nested subtasks) + embedded calendar / task detail pane
-- `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings)
+- `/plan` — BOARD (year/month/week goal kanbans) + CALENDAR (Google Calendar ICS, week time grid, time blocks with tasks)
+- `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings, × delete on list)
+- `/settings` — Google Calendar iCal URL
 - `/braindump` — 50/50 split: form (text + mic → MediaRecorder blob → fn-transcribe/Groq Whisper) + persisted history feed (cards per dump, survives reload, per-card debug panel + reprompt)
 - `/notes` — list with live filter bar (title/content/tag search)
 - `/dashboard` — still exists as a route (LCD metrics + overdue contacts) but no longer linked from nav
@@ -397,6 +399,8 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 **Known issue**: if a braindump job's Edge Function secret (`DEEPSEEK_TOKEN` or `JINA_API_KEY`) goes bad, the job flips straight to `processing_status='failed'` with no visible symptom in the UI other than "nothing got created" — always check the `/braindump` page's per-card "🔍 Debug reasoning" panel first, it surfaces the real error. If a job is stuck (e.g. you fixed a secret after the fact), reset it manually: `update braindump_jobs set processing_status='pending', retry_count=0 where id=...` — pg_cron picks it up within 2 min, or trigger immediately with a POST to `fn-process-braindump`.
 
 ## What's Next (possible next features)
+
+- **Chunk 3 — Chat harness** (next up; spec in `docs/superpowers/specs/2026-09-23-harness-planner-design.md`): `/tasks` B screen → DeepSeek chat with read tools (auto) + write tools (proposal → Confirm), `/prioritize` `/model` `/memory`, daily threads + compaction into `chat_memories`, $5/mo cap. Spike DeepSeek tool-loop + real pricing before building UI. Replaces DUMP tab (keep `fn-process-braindump` for mobile/cron).
 
 - **Task sort persistence** — save drag order to DB (`sort_order` column on tasks). Groups are persisted now; order within a group still isn't.
 - **Session history / stats** — `/session` only lists `active` sessions; ended ones + `session_rounds` ratings aren't surfaced anywhere yet
