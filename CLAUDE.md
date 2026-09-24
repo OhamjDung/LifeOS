@@ -374,16 +374,18 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | 20 — Focus sessions | ✅ Done — `/session` Pomodoro timer, session tasks, lockin rating per round, Skip Break, keep/discard on end |
 | 21 — Persisted task groups + infinite subtasks | ✅ Done — `task_groups` table, `group_id`, `parent_subtask_id`, drag between groups |
 | 22 — Quick notes widget | ✅ Done — global bottom-right tabbed scratchpad, hover open/close, localStorage drafts |
-| 23 — Rework (spec: `docs/superpowers/specs/2026-09-23-harness-planner-design.md`) | 🚧 Chunk 0 ✅ (session delete, press animations) · Chunk 1 ✅ Planner board · Chunk 2 ✅ Calendar/ICS · Chunk 3 ✅ Chat harness |
+| 23 — Rework (spec: `docs/superpowers/specs/2026-09-23-harness-planner-design.md`) | ✅ Done 2026-09-24 — session delete + press animations, Planner (year/month/week boards), Plan calendar (Google ICS + time blocks), /tasks B-screen CHAT (fn-chat harness) + TODAY time grid, contact categories |
 
 **Migrations applied**: `migrations_v3.sql` through `migrations_v15.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed, v12 `plan_goals`, v13 `user_settings`/`calendar_cache`/`time_blocks`/`time_block_tasks`, v14 `chat_threads`/`chat_messages`/`chat_memories` + `contacts.category`, v15 chat tables read-only for users). All `.sql` files are committed.
 
 ## What's Working Right Now (Sep 2026)
 
-**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / SESSION / DUMP / NOTES / PEOPLE (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
-- `/tasks` — 50/50 split: task list (drag reorder, drag between groups, Keep in Touch section, priority mode, persisted AI groups, nested subtasks) + embedded calendar / task detail pane
+**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / PLAN / SESSION / NOTES / PEOPLE + ⚙ (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
+- `/tasks` — 50/50 split: task list (drag reorder, drag between groups, Keep in Touch section, priority mode, persisted AI groups, nested subtasks, darker rows for tasks already in a time block) + B screen CHAT (AI assistant, confirm-first) | TODAY (time grid; drag tasks from the list onto blocks) / task detail pane
+- `/plan` — BOARD (year goals, month kanban, week boards with goal distribution, drag-to-trash) and CALENDAR (Google Calendar ICS + time blocks, week/month)
+- `/settings` — Google Calendar iCal link, assistant model/budget, memory editor
 - `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings)
-- `/braindump` — 50/50 split: form (text + mic → MediaRecorder blob → fn-transcribe/Groq Whisper) + persisted history feed (cards per dump, survives reload, per-card debug panel + reprompt)
+- `/braindump` — (hidden from nav; chat replaced it) 50/50 split: form (text + mic → MediaRecorder blob → fn-transcribe/Groq Whisper) + persisted history feed (cards per dump, survives reload, per-card debug panel + reprompt)
 - `/notes` — list with live filter bar (title/content/tag search)
 - `/dashboard` — still exists as a route (LCD metrics + overdue contacts) but no longer linked from nav
 - `/contacts` — CRM with tiers, structured profile fields, AI draft messages
@@ -407,6 +409,10 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 **Known issue**: if a braindump job's Edge Function secret (`DEEPSEEK_TOKEN` or `JINA_API_KEY`) goes bad, the job flips straight to `processing_status='failed'` with no visible symptom in the UI other than "nothing got created" — always check the `/braindump` page's per-card "🔍 Debug reasoning" panel first, it surfaces the real error. If a job is stuck (e.g. you fixed a secret after the fact), reset it manually: `update braindump_jobs set processing_status='pending', retry_count=0 where id=...` — pg_cron picks it up within 2 min, or trigger immediately with a POST to `fn-process-braindump`.
 
 ## What's Next (possible next features)
+
+- **Local "today" on /tasks** — `tasks/page.tsx` computes `today` in UTC (server), the chat uses the user's tz. From ~7pm–midnight Chicago they disagree, and auto-rollover pushes that evening's pending tasks to tomorrow. Fix: client sends tz (cookie) → server computes local date. Pre-existing, but the chat makes it visible.
+- **Chat: streaming replies**, a chat pop-out on other pages (A3 "could change in future"), planner write tools (deliberately read-only for now), `group_tasks` tool (dropped from spec — the TaskList AI group button covers it).
+- **Two-way Google Calendar** (OAuth) — ICS is read-only.
 
 - **Task sort persistence** — save drag order to DB (`sort_order` column on tasks). Groups are persisted now; order within a group still isn't.
 - **Session history / stats** — `/session` only lists `active` sessions; ended ones + `session_rounds` ratings aren't surfaced anywhere yet
