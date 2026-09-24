@@ -169,7 +169,9 @@ Pomodoro-style work/break timer, web only. Tables `sessions`, `session_tasks`, `
 - `/session/[id]` — full-screen timer. Background swaps by phase: work = `#1C1A14` (dark), break = `#DEDAD2`, idle = `#CCCAC0`. Buttons: pause/resume, start break, Skip Break, end session.
 - **Timer is wall-clock derived, not tick-counted** (`web/lib/sessionTimer.ts`): running phase stores `phase_started_at` and remaining = `duration − (now − phase_started_at)`, so a closed/reopened tab recomputes correctly. Pause = set `phase_started_at=null` + snapshot `phase_remaining_seconds`; resume = clear the snapshot + set `phase_started_at=now`. Don't add a client-side countdown that mutates DB every second.
 - **Rounds**: `sessions.round` increments when a work phase completes. `LockinRatingModal` then asks for a 1–5 "lockin-ness" rating → inserted into `session_rounds` (`lockin_rating` check 1..5).
-- **Session tasks** (`SessionTaskPanel`): link existing tasks (search shows all pending on focus) or create new ones inline. Inline-created ones get `session_tasks.is_session_created=true`. Complete-toggle + unlink per task; subtasks checkable/removable here too.
+- **Session tasks** (`SessionTaskPanel`): link existing tasks or create new ones inline. Inline-created ones get `session_tasks.is_session_created=true`. Complete-toggle + unlink per task; subtasks checkable/removable here too.
+  - "Add existing" browse list loads all pending tasks **plus tasks completed today** (`updated_at >= local midnight`) so a tick can be undone in place. Each row has its own check circle → marks the task done on the main board **without linking it**; clicking the title links it.
+  - Both sections (linked session tasks + browse list) sort pending first, done last.
 - **End session** (`EndSessionModal`): lists only `is_session_created=true` tasks and asks keep/discard per task — completed ones default to **Discard**. Then `status='ended'`, `ended_at=now`.
 
 ## Quick Notes Widget
