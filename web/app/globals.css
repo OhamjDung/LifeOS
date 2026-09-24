@@ -49,6 +49,32 @@ button:disabled { cursor: not-allowed; }
   input, textarea, select { font-size: 16px; }
   button { min-height: 36px; }
 }
+/* Press feedback on every clickable thing. Unlayered, so it beats Tailwind's
+   @layer utilities — the transition list must carry the color props too or
+   every `transition-colors` hover would snap instead of fade. */
+:where(button, [role="button"], .app-nav a, .btn-like, summary) {
+  transition-property: color, background-color, border-color, opacity, box-shadow, transform, filter;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(.2, .8, .2, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+:where(button, [role="button"], .app-nav a, .btn-like, summary):not(:disabled):active {
+  transform: scale(.95);
+  filter: brightness(.94);
+  transition-duration: 60ms;
+}
+
+@keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@keyframes slide-in-right { from { opacity: 0; transform: translateX(24px) } to { opacity: 1; transform: none } }
+@keyframes pop { 0% { opacity: 0; transform: scale(.94) } 60% { opacity: 1; transform: scale(1.02) } 100% { transform: scale(1) } }
+@keyframes shrink-out { to { opacity: 0; transform: scale(.92) } }
+.animate-fade-in { animation: fade-in 180ms ease-out both; }
+.animate-slide-up { animation: slide-up 220ms cubic-bezier(.2, .8, .2, 1) both; }
+.animate-slide-in-right { animation: slide-in-right 240ms cubic-bezier(.2, .8, .2, 1) both; }
+.animate-pop { animation: pop 260ms cubic-bezier(.2, .8, .2, 1) both; }
+.animate-shrink-out { animation: shrink-out 160ms ease-in both; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
