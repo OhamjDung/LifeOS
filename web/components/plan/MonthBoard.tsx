@@ -114,6 +114,17 @@ export function MonthBoard() {
                   {STATUS_META[g.status].label}
                 </span>
                 <span className="text-[10px] text-gray-500" title="Month goals linked">{linked}↓</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Delete ${g.title}`}
+                  title="Delete"
+                  onClick={e => { e.stopPropagation(); remove(g.id) }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); remove(g.id) } }}
+                  className="-mr-1 w-4 h-4 flex items-center justify-center rounded-full text-gray-500 hover:text-red-700 hover:bg-red-700/10"
+                >
+                  ×
+                </span>
               </button>
             )
           })}
@@ -183,6 +194,7 @@ export function MonthBoard() {
                         onDragStart={() => setDrag({ id: g.id, fromMonth: m })}
                         onDragEnd={() => setDrag(null)}
                         onDropBefore={() => dropInto(m, g.id)}
+                        onDelete={() => remove(g.id)}
                       />
                     )
                   })}

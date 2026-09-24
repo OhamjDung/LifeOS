@@ -32,15 +32,11 @@ export function MonthGrid({
     if (e.allDay) for (const d of allDayDays(e)) push(d, { key: `${e.uid}-${e.start}-${d}`, label: e.title, tone: 'ics' })
     else push(ymd(new Date(e.start)), { key: `${e.uid}-${e.start}`, label: `${formatTime(e.start)} ${e.title}`, tone: 'ics' })
   }
-  for (const t of tasks) if (t.task_type === 'event') push(t.due_date, { key: t.id, label: t.title, tone: 'event' })
+  for (const t of tasks) if (t.task_type === 'event' && t.status !== 'done') push(t.due_date, { key: t.id, label: t.title, tone: 'event' })
   for (const b of blocks) push(ymd(new Date(b.start_at)), { key: b.id, label: `${formatTime(b.start_at)} ${b.title || b.tasks[0]?.title || 'Block'}`, tone: 'block' })
-  const taskCount = new Map<string, { open: number; done: number }>()
+  const openTasks = new Map<string, number>()
   for (const t of tasks) {
-    if (t.task_type !== 'task') continue
-    const c = taskCount.get(t.due_date) ?? { open: 0, done: 0 }
-    if (t.status === 'done') c.done++
-    else c.open++
-    taskCount.set(t.due_date, c)
+    if (t.task_type === 'task' && t.status === 'pending') openTasks.set(t.due_date, (openTasks.get(t.due_date) ?? 0) + 1)
   }
 
   const tones = {
@@ -59,7 +55,7 @@ export function MonthGrid({
       <div className="grid grid-cols-7">
         {days.map((day, i) => {
           const items = byDay.get(day) ?? []
-          const tc = taskCount.get(day)
+          const open = openTasks.get(day)
           const inMonth = day.slice(0, 7) === month
           const isToday = day === today
           return (
@@ -76,11 +72,7 @@ export function MonthGrid({
                 }`}>
                   {parseYmd(day).getDate()}
                 </span>
-                {tc && (
-                  <span className="text-[9px] text-gray-500" title={`${tc.open} open, ${tc.done} done tasks`}>
-                    ☐{tc.open}{tc.done ? ` ✓${tc.done}` : ''}
-                  </span>
-                )}
+                {open ? <span className="text-[9px] text-gray-500" title={`${open} open tasks`}>☐{open}</span> : null}
               </div>
               <div className="space-y-0.5">
                 {items.slice(0, 3).map(it => (

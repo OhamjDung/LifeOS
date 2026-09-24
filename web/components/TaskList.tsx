@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/lib/types'
 import { useTaskSelection } from '@/lib/taskSelection'
+import { TASK_DRAG_TYPE } from '@/lib/calendar'
 
 type GroupColor = TaskGroupColor
 
@@ -12,6 +13,13 @@ interface AiGroupSuggestion {
   name: string
   color: GroupColor
   task_ids: string[]
+}
+
+// Every task row also carries a calendar payload, so it can be dropped onto a
+// time block in the B-screen day calendar (WeekGrid reads TASK_DRAG_TYPE).
+function markTaskDrag(e: React.DragEvent, task: Task) {
+  e.dataTransfer.setData(TASK_DRAG_TYPE, JSON.stringify({ id: task.id, title: task.title }))
+  e.dataTransfer.effectAllowed = 'copyMove'
 }
 
 const GROUP_COLORS: Record<
@@ -711,7 +719,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
                   <div
                     key={task.id}
                     draggable
-                    onDragStart={() => handleGroupDragStart(task.id)}
+                    onDragStart={e => { markTaskDrag(e, task); handleGroupDragStart(task.id) }}
                     onDragEnd={() => setDraggedTaskId(null)}
                     className="cursor-grab active:cursor-grabbing"
                   >
@@ -730,8 +738,8 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               {followUp.map((task, idx) => (
                 <div
                   key={task.id}
-                  draggable={orderBy === 'created' && !priorityMode}
-                  onDragStart={() => handleDragStart(idx, 'followUp')}
+                  draggable
+                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created' && !priorityMode) handleDragStart(idx, 'followUp') }}
                   onDragOver={e => handleDragOver(e, idx, 'followUp')}
                   onDrop={() => handleDrop(idx, 'followUp')}
                   onDragEnd={handleDragEnd}
@@ -752,8 +760,8 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               {pending.map((task, idx) => (
                 <div
                   key={task.id}
-                  draggable={orderBy === 'created'}
-                  onDragStart={() => handleDragStart(idx, 'pending')}
+                  draggable
+                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created') handleDragStart(idx, 'pending') }}
                   onDragOver={e => handleDragOver(e, idx, 'pending')}
                   onDrop={() => handleDrop(idx, 'pending')}
                   onDragEnd={handleDragEnd}
@@ -864,7 +872,7 @@ function GroupCard({
           <div
             key={task.id}
             draggable
-            onDragStart={() => onDragStartTask(task.id)}
+            onDragStart={e => { markTaskDrag(e, task); onDragStartTask(task.id) }}
             onDragEnd={onDragEndTask}
             className="cursor-grab active:cursor-grabbing"
           >

@@ -1,36 +1,26 @@
 'use client'
 
-import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { BlockColor, CalendarResult, TimeBlock, fetchCalendar } from '@/lib/calendar'
+import { useEffect, useMemo, useState } from 'react'
+import { BlockColor, TASK_DRAG_TYPE } from '@/lib/calendar'
 import { addDays, mondayOf, monthLabel, parseYmd, weekLabel, ymd } from '@/lib/planDates'
-import { DayTask, TASK_DRAG_TYPE, WeekGrid } from './WeekGrid'
+import { DayTask, WeekGrid } from './WeekGrid'
 import { MonthGrid } from './MonthGrid'
 import { BlockEditor } from './BlockEditor'
+import { CalendarStatus } from './CalendarStatus'
+import { useCalendarData } from './useCalendarData'
 
 type Mode = 'week' | 'month'
-type BlockRow = Omit<TimeBlock, 'tasks'> & { time_block_tasks: { task_id: string; tasks: { id: string; title: string; status: string } | null }[] }
-
-const POLL_MS = 15 * 60 * 1000
 
 function readMode(): Mode {
   try { return localStorage.getItem('calMode') === 'month' ? 'month' : 'week' } catch { return 'week' }
 }
 
 export function CalendarView() {
-  const [supabase] = useState(createClient)
   const [mode, setModeState] = useState<Mode>('week')
   const [anchor, setAnchor] = useState(() => ymd(new Date()))
-  const [cal, setCal] = useState<CalendarResult | null>(null)
-  const [calLoading, setCalLoading] = useState(false)
-  const [calError, setCalError] = useState<string | null>(null)
-  const [tasks, setTasks] = useState<DayTask[]>([])
-  const [blocks, setBlocks] = useState<TimeBlock[]>([])
   const [tray, setTray] = useState<DayTask[]>([])
   const [trayQuery, setTrayQuery] = useState('')
   const [openBlock, setOpenBlock] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => { setModeState(readMode()) }, []) // eslint-disable-line react-hooks/set-state-in-effect -- localStorage only exists client-side
   const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('calMode', m) } catch {} }
@@ -49,108 +39,16 @@ export function CalendarView() {
   const rangeStart = days[0]
   const rangeEnd = addDays(days[days.length - 1], 1)
 
-  const loadCalendar = useCallback(async (refresh = false) => {
-    setCalLoading(true)
-    try {
-      const r = await fetchCalendar(parseYmd(rangeStart), parseYmd(rangeEnd), refresh)
-      setCal(r)
-      setCalError(r.error)
-    } catch (e) {
-      setCalError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setCalLoading(false)
-    }
-  }, [rangeStart, rangeEnd])
-
-  const loadLocal = useCallback(async () => {
-    const [{ data: t }, { data: b }] = await Promise.all([
-      supabase.from('tasks').select('id,title,status,task_type,due_date')
-        .gte('due_date', rangeStart).lt('due_date', rangeEnd).neq('status', 'rolled_over'),
-      supabase.from('time_blocks').select('*, time_block_tasks(task_id, tasks(id,title,status))')
-        .gte('end_at', parseYmd(rangeStart).toISOString()).lt('start_at', parseYmd(rangeEnd).toISOString()),
-    ])
-    setTasks((t as DayTask[]) ?? [])
-    setBlocks(((b as BlockRow[]) ?? []).map(({ time_block_tasks, ...rest }) => ({
-      ...rest,
-      tasks: time_block_tasks.map(x => x.tasks).filter((x): x is NonNullable<typeof x> => !!x),
-    })))
-  }, [supabase, rangeStart, rangeEnd])
-
-  useEffect(() => {
-    // Fetch-on-range-change: the synchronous setCalLoading(true) is the intended loading flag.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadCalendar()
-    loadLocal()
-    const t = setInterval(() => loadCalendar(), POLL_MS)
-    return () => clearInterval(t)
-  }, [loadCalendar, loadLocal])
+  const {
+    supabase, cal, calLoading, calError, loadCalendar, tasks, blocks, error, setError,
+    createBlock, updateBlock, deleteBlock, assignTask, unassignTask,
+  } = useCalendarData(rangeStart, rangeEnd)
 
   useEffect(() => {
     supabase.from('tasks').select('id,title,status,task_type,due_date')
       .eq('status', 'pending').eq('task_type', 'task').order('due_date').limit(300)
       .then(({ data }) => setTray((data as DayTask[]) ?? []))
   }, [supabase])
-
-  // ── block mutations (optimistic, roll back on failure) ──
-  async function createBlock(start_at: string, end_at: string, task?: { id: string; title: string }) {
-    setError(null)
-    const tempId = `temp-${Math.random().toString(36).slice(2)}`
-    const { data: { user } } = await supabase.auth.getUser()
-    const optimistic: TimeBlock = {
-      id: tempId, user_id: user?.id ?? '', title: null, start_at, end_at, color: 'indigo',
-      created_at: new Date().toISOString(), tasks: task ? [{ id: task.id, title: task.title, status: 'pending' }] : [],
-    }
-    setBlocks(prev => [...prev, optimistic])
-    const { data, error } = await supabase.from('time_blocks')
-      .insert({ user_id: user?.id, start_at, end_at }).select('*').single()
-    if (error || !data) {
-      setBlocks(prev => prev.filter(b => b.id !== tempId))
-      setError(error?.message ?? 'Could not create block')
-      return
-    }
-    if (task) {
-      const { error: linkErr } = await supabase.from('time_block_tasks').insert({ block_id: data.id, task_id: task.id, user_id: user?.id })
-      if (linkErr) setError(linkErr.message)
-    }
-    setBlocks(prev => prev.map(b => (b.id === tempId ? { ...(data as TimeBlock), tasks: optimistic.tasks } : b)))
-  }
-
-  async function updateBlock(id: string, patch: Partial<Pick<TimeBlock, 'start_at' | 'end_at' | 'title' | 'color'>>) {
-    setError(null)
-    const before = blocks
-    setBlocks(prev => prev.map(b => (b.id === id ? { ...b, ...patch } : b)))
-    const { error } = await supabase.from('time_blocks').update(patch).eq('id', id)
-    if (error) { setBlocks(before); setError(error.message) }
-  }
-
-  async function deleteBlock(id: string) {
-    setError(null)
-    const before = blocks
-    setBlocks(prev => prev.filter(b => b.id !== id))
-    setOpenBlock(null)
-    const { error } = await supabase.from('time_blocks').delete().eq('id', id)
-    if (error) { setBlocks(before); setError(error.message) }
-  }
-
-  async function assignTask(blockId: string, taskId: string) {
-    const block = blocks.find(b => b.id === blockId)
-    const task = tray.find(t => t.id === taskId) ?? tasks.find(t => t.id === taskId)
-    if (!block || !task || block.tasks.some(t => t.id === taskId)) return
-    setError(null)
-    const before = blocks
-    setBlocks(prev => prev.map(b => (b.id === blockId ? { ...b, tasks: [...b.tasks, { id: task.id, title: task.title, status: task.status }] } : b)))
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('time_block_tasks').insert({ block_id: blockId, task_id: taskId, user_id: user?.id })
-    if (error) { setBlocks(before); setError(error.message) }
-  }
-
-  async function unassignTask(blockId: string, taskId: string) {
-    setError(null)
-    const before = blocks
-    setBlocks(prev => prev.map(b => (b.id === blockId ? { ...b, tasks: b.tasks.filter(t => t.id !== taskId) } : b)))
-    const { error } = await supabase.from('time_block_tasks').delete().eq('block_id', blockId).eq('task_id', taskId)
-    if (error) { setBlocks(before); setError(error.message) }
-  }
 
   function shift(n: number) {
     const a = parseYmd(anchor)
@@ -188,22 +86,7 @@ export function CalendarView() {
         </div>
       </div>
 
-      {cal && !cal.configured && (
-        <p className="text-xs text-gray-500 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 animate-fade-in">
-          Google Calendar isn&apos;t connected. <Link href="/settings" className="text-indigo-600 underline">Add your iCal link in Settings</Link> to see your events here.
-        </p>
-      )}
-      {calError && (
-        <p role="alert" className="text-xs text-red-800 bg-red-100/60 border border-red-300 rounded-lg px-3 py-2 animate-slide-up">
-          Calendar sync failed{cal?.stale && cal.events.length ? ' (showing last synced events)' : ''}: {calError}
-        </p>
-      )}
-      {error && (
-        <div role="alert" className="flex items-center gap-3 text-xs text-red-800 bg-red-100/60 border border-red-300 rounded-lg px-3 py-2 animate-slide-up">
-          <span className="flex-1">Couldn&apos;t save: {error}</span>
-          <button onClick={() => setError(null)} aria-label="Dismiss error" className="px-1">×</button>
-        </div>
-      )}
+      <CalendarStatus cal={cal} calError={calError} error={error} onDismissError={() => setError(null)} />
 
       {mode === 'month' ? (
         <MonthGrid days={days} monthKey={monthKey} events={events} tasks={tasks} blocks={blocks}
@@ -262,7 +145,7 @@ export function CalendarView() {
           key={active.id}
           block={active}
           onClose={() => setOpenBlock(null)}
-          onDelete={() => deleteBlock(active.id)}
+          onDelete={() => { deleteBlock(active.id); setOpenBlock(null) }}
           onUnassign={taskId => unassignTask(active.id, taskId)}
           onSave={patch => { updateBlock(active.id, patch as { title: string | null; color: BlockColor }); setOpenBlock(null) }}
         />

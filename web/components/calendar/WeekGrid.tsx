@@ -2,11 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  BLOCK_COLORS, CalEvent, TimeBlock, allDayDays, formatTime, layoutLanes, minutesInDay,
+  BLOCK_COLORS, CalEvent, TASK_DRAG_TYPE, TimeBlock, allDayDays, formatTime, layoutLanes, minutesInDay,
 } from '@/lib/calendar'
 import { parseYmd, ymd } from '@/lib/planDates'
 
-export const TASK_DRAG_TYPE = 'application/x-lifeos-task'
 export type DayTask = { id: string; title: string; status: string; task_type: string; due_date: string }
 
 const HOUR_PX = 48
@@ -43,7 +42,9 @@ export function WeekGrid({
   onUpdateBlock,
   onOpenBlock,
   onAssignTask,
+  height = 'min(70vh, 720px)',
 }: {
+  /** 1 (day view) to 7 (week view) consecutive days */
   days: string[]
   events: CalEvent[]
   tasks: DayTask[]
@@ -51,8 +52,10 @@ export function WeekGrid({
   onCreateBlock: (startIso: string, endIso: string, task?: { id: string; title: string }) => void
   onUpdateBlock: (id: string, patch: { start_at: string; end_at: string }) => void
   onOpenBlock: (id: string) => void
-  onAssignTask: (blockId: string, taskId: string) => void
+  onAssignTask: (blockId: string, task: { id: string; title: string }) => void
+  height?: string
 }) {
+  const n = days.length
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag>(null)
@@ -68,7 +71,7 @@ export function WeekGrid({
 
   function pos(e: { clientX: number; clientY: number }) {
     const rect = gridRef.current!.getBoundingClientRect()
-    const day = clamp(Math.floor(((e.clientX - rect.left) / rect.width) * 7), 0, 6)
+    const day = clamp(Math.floor(((e.clientX - rect.left) / rect.width) * n), 0, n - 1)
     const minute = clamp(((e.clientY - rect.top) / HOUR_PX) * 60, 0, DAY_MIN)
     return { day, minute }
   }
@@ -135,8 +138,10 @@ export function WeekGrid({
   // ── what to draw per day ──
   const allDay = days.map(day => [
     ...events.filter(e => e.allDay && allDayDays(e).includes(day)).map(e => ({ key: `e-${e.uid}-${e.start}`, title: e.title, kind: 'ics' as const, done: false })),
-    ...tasks.filter(t => t.due_date === day).map(t => ({ key: `t-${t.id}`, title: t.title, kind: t.task_type === 'event' ? 'event' as const : 'task' as const, done: t.status === 'done' })),
+    ...tasks.filter(t => t.due_date === day && t.task_type === 'event' && t.status !== 'done')
+      .map(t => ({ key: `t-${t.id}`, title: t.title, kind: 'event' as const, done: false })),
   ])
+  const hasAllDay = allDay.some(items => items.length > 0)
 
   type Item =
     | { kind: 'ics'; key: string; startMin: number; endMin: number; ev: CalEvent }
@@ -178,9 +183,9 @@ export function WeekGrid({
   return (
     <div className="rounded-xl overflow-hidden border border-gray-800 bg-gray-900">
       <div className="overflow-x-auto">
-        <div className="min-w-[640px]">
+        <div className={n > 1 ? 'min-w-[640px]' : ''}>
           {/* Header + all-day row */}
-          <div className="grid border-b border-gray-800" style={{ gridTemplateColumns: '52px repeat(7, 1fr)' }}>
+          <div className="grid border-b border-gray-800" style={{ gridTemplateColumns: `52px repeat(${n}, 1fr)` }}>
             <div />
             {days.map(day => {
               const d = parseYmd(day)
@@ -198,8 +203,8 @@ export function WeekGrid({
                 </div>
               )
             })}
-            <div className="text-[9px] text-gray-500 text-right pr-1.5 pt-1.5 border-t border-gray-800">all-day</div>
-            {allDay.map((items, i) => (
+            {hasAllDay && <div className="text-[9px] text-gray-500 text-right pr-1.5 pt-1.5 border-t border-gray-800">all-day</div>}
+            {hasAllDay && allDay.map((items, i) => (
               <div key={days[i]} className="border-l border-t border-gray-800 p-1 space-y-0.5 min-h-7">
                 {items.slice(0, 4).map(it => (
                   <div
@@ -212,7 +217,7 @@ export function WeekGrid({
                       : { background: 'transparent', color: '#3A3430', border: '1px dashed rgba(28,26,20,0.25)' }
                     }
                   >
-                    {it.kind === 'task' ? '☐ ' : ''}{it.title}
+                    {it.title}
                   </div>
                 ))}
                 {items.length > 4 && <div className="text-[9px] text-gray-500 px-1">+{items.length - 4} more</div>}
@@ -221,7 +226,7 @@ export function WeekGrid({
           </div>
 
           {/* Time grid */}
-          <div ref={scrollRef} className="relative overflow-y-auto" style={{ height: 'min(70vh, 720px)' }}>
+          <div ref={scrollRef} className="relative overflow-y-auto" style={{ height }}>
             <div className="grid" style={{ gridTemplateColumns: '52px 1fr' }}>
               <div className="relative" style={{ height: 24 * HOUR_PX }}>
                 {Array.from({ length: 24 }, (_, h) => (
@@ -232,8 +237,9 @@ export function WeekGrid({
               </div>
               <div
                 ref={gridRef}
-                className={`relative grid grid-cols-7 select-none touch-none ${drag?.kind === 'create' ? 'cursor-ns-resize' : 'cursor-crosshair'}`}
+                className={`relative grid select-none touch-none ${drag?.kind === 'create' ? 'cursor-ns-resize' : 'cursor-crosshair'}`}
                 style={{
+                  gridTemplateColumns: `repeat(${n}, 1fr)`,
                   height: 24 * HOUR_PX,
                   backgroundImage: `repeating-linear-gradient(to bottom, rgba(28,26,20,0.08) 0 1px, transparent 1px ${HOUR_PX}px)`,
                 }}
@@ -281,7 +287,7 @@ export function WeekGrid({
                             setDropBlock(null)
                             if (!raw) return
                             e.preventDefault(); e.stopPropagation()
-                            onAssignTask(b.id, (JSON.parse(raw) as { id: string }).id)
+                            onAssignTask(b.id, JSON.parse(raw) as { id: string; title: string })
                           }}
                           className={`absolute rounded-md px-1.5 py-1 overflow-hidden text-[10px] leading-tight pointer-events-auto cursor-grab active:cursor-grabbing animate-pop ${
                             dropBlock === b.id ? 'ring-2 ring-offset-1 ring-indigo-600 scale-[1.02]' : ''
@@ -290,8 +296,8 @@ export function WeekGrid({
                         >
                           <div className="font-semibold truncate">{b.title || (b.tasks[0]?.title ?? 'Block')}</div>
                           {height > 30 && <div className="opacity-70">{label}</div>}
-                          {b.tasks.map(t => (
-                            <div key={t.id} className={`truncate ${t.status === 'done' ? 'line-through opacity-50' : ''}`}>☐ {t.title}</div>
+                          {b.tasks.filter(t => t.status !== 'done').map(t => (
+                            <div key={t.id} className="truncate">☐ {t.title}</div>
                           ))}
                           <div
                             onPointerDown={e => onBlockPointerDown(e, b, di, true)}

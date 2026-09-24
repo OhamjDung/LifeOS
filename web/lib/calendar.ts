@@ -1,6 +1,9 @@
 import { createClient } from './supabase/client'
 import { ymd } from './planDates'
 
+/** dataTransfer type for dragging a task ({id,title} JSON) onto the calendar. */
+export const TASK_DRAG_TYPE = 'application/x-lifeos-task'
+
 /** Same shape as supabase/functions/_shared/ics.ts CalEvent. */
 export interface CalEvent {
   uid: string

@@ -194,7 +194,7 @@ web/app/
   layout.tsx                     # IBM Plex Mono font via next/font/google
   (app)/layout.tsx               # auth guard + <NavBar /> (left sidebar) + <QuickNotesWidget /> (global, bottom-right)
   (app)/dashboard/page.tsx       # LCD metrics panel + overdue contacts + DashboardUpNext — still exists as a route, but no longer in nav; post-login redirect goes to /tasks instead
-  (app)/tasks/page.tsx           # 50/50 split: A screen (left) = TaskList, B screen (right) = calendar grid / TaskDetailPane (selected via TaskSelectionProvider); searchParams m/y/d for month+day selection
+  (app)/tasks/page.tsx           # 50/50 split: A screen (left) = TaskList, B screen (right) = DayCalendar (today's time grid) / TaskDetailPane (selected via TaskSelectionProvider). A-screen task rows drag straight onto B-screen time blocks
   (app)/calendar/page.tsx        # redirects to /plan?view=calendar
   (app)/plan/page.tsx            # Planner: ?view=calendar → CalendarView, else BOARD (year-goal strip + month kanban, MonthBoard)
   (app)/settings/page.tsx        # SettingsForm — Google Calendar iCal URL (masked once saved, validated by an immediate sync)
@@ -209,14 +209,14 @@ web/lib/
   supabase/{client,server,middleware}.ts
   types.ts                       # all shared TypeScript types (Task, Subtask, PersistedTaskGroup, FocusSession, SessionTask, ...)
   planDates.ts                   # local YYYY-MM-DD month/week math (weeksOfMonth, mondayOf, addMonths…) — never toISOString (UTC shift)
-  calendar.ts                    # CalEvent/TimeBlock types, BLOCK_COLORS, fetchCalendar() → fn-calendar-events, layoutLanes() overlap layout
+  calendar.ts                    # TASK_DRAG_TYPE (TaskList rows + tray set it), CalEvent/TimeBlock types, BLOCK_COLORS, fetchCalendar() → fn-calendar-events, layoutLanes() overlap layout
   planGoals.ts                   # category colors, STATUS_META, reorderColumn() for kanban drops
   sessionTimer.ts                # remainingSeconds() / formatMMSS() — wall-clock timer math for focus sessions
   taskSelection.tsx              # TaskSelectionProvider + useTaskSelection() — which task the B-screen detail pane shows
   contactMerge.ts                # applyPendingContact() — client-side insert/update + contact_events write, mirrors edge fn merge policy
 web/components/
   NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / PLAN / SESSION / DUMP / NOTES / PEOPLE (TODAY/dashboard tab removed)
-  calendar/                      # CalendarView (week/month toggle, 15-min poll, block CRUD, task tray), WeekGrid (time grid, pointer-capture create/move/resize, HTML5 task drop), MonthGrid, BlockEditor
+  calendar/                      # useCalendarData (events poll + tasks + block CRUD, shared), CalendarView (/plan week/month + task tray), DayCalendar (/tasks B screen, today only, no tray), WeekGrid (1–7 day time grid, pointer-capture create/move/resize, HTML5 task drop), MonthGrid, BlockEditor, CalendarStatus
   SettingsForm.tsx               # /settings
   plan/                          # MonthBoard, WeekBoard, BoardColumn, GoalCard, GoalEditor, usePlanGoals (optimistic CRUD + rollback)
   TaskList.tsx                   # A screen: add/complete/rollover/delete, "Keep in Touch" section, drag-to-reorder + drag between groups, priority mode, persisted group view (calls fn-group-tasks), nested subtasks
@@ -370,11 +370,9 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 ## What's Working Right Now (Sep 2026)
 
-**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / PLAN / SESSION / DUMP / NOTES / PEOPLE + ⚙ SET (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
+**Web app** (`/web`) is the primary surface — fully functional. Nav: TASKS / SESSION / DUMP / NOTES / PEOPLE (post-login lands on `/tasks`, not a dashboard). Responsive pass started 2026-09-17: nav is a horizontal sticky bar under `sm`, the 50/50 split pages (`/tasks`, `/braindump`) stack under `lg`, inputs are 16px on phones (no iOS zoom), focus rings + `aria-*` on interactive controls, `prefers-reduced-motion` honored. Every mutation button has a click-lock (`useRef`) + inline `role="alert"` error and rolls back optimistic state on failure.
 - `/tasks` — 50/50 split: task list (drag reorder, drag between groups, Keep in Touch section, priority mode, persisted AI groups, nested subtasks) + embedded calendar / task detail pane
-- `/plan` — BOARD (year/month/week goal kanbans) + CALENDAR (Google Calendar ICS, week time grid, time blocks with tasks)
-- `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings, × delete on list)
-- `/settings` — Google Calendar iCal URL
+- `/session` — focus sessions (Pomodoro timer, linked tasks, round ratings)
 - `/braindump` — 50/50 split: form (text + mic → MediaRecorder blob → fn-transcribe/Groq Whisper) + persisted history feed (cards per dump, survives reload, per-card debug panel + reprompt)
 - `/notes` — list with live filter bar (title/content/tag search)
 - `/dashboard` — still exists as a route (LCD metrics + overdue contacts) but no longer linked from nav
@@ -400,8 +398,6 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 ## What's Next (possible next features)
 
-- **Chunk 3 — Chat harness** (next up; spec in `docs/superpowers/specs/2026-09-23-harness-planner-design.md`): `/tasks` B screen → DeepSeek chat with read tools (auto) + write tools (proposal → Confirm), `/prioritize` `/model` `/memory`, daily threads + compaction into `chat_memories`, $5/mo cap. Spike DeepSeek tool-loop + real pricing before building UI. Replaces DUMP tab (keep `fn-process-braindump` for mobile/cron).
-
 - **Task sort persistence** — save drag order to DB (`sort_order` column on tasks). Groups are persisted now; order within a group still isn't.
 - **Session history / stats** — `/session` only lists `active` sessions; ended ones + `session_rounds` ratings aren't surfaced anywhere yet
 - **Focus sessions on mobile** — web only today
@@ -417,9 +413,10 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 `plan_goals` (v12) — one table for all levels: `level` year|month|week, `title`, `description`, `category` (free text; presets School/Career/Health/Social/Personal/Finance get fixed colors), `status` not_started|in_progress|done, `period_start`/`period_end` (year = Jan 1; month = 1st; week = Monday; `period_end` > start only for multi-month month goals), `parent_id` (week→month goal, month→year goal, `on delete set null`), `sort_order`.
 - A week belongs to the month its **Monday** is in (weeks Mon–Sun).
 - Month board: current month + 3 (`+ 3 more`), multi-month goals render in every column they cover; dragging shifts start+end by the same month delta. Hovering a year-goal chip highlights its month goals.
-- Week board: sidebar = this month's goals with linked-week-item counts + bars (0 = red, "not distributing evenly"); clicking a goal focuses it and quick-adds link to it.
+- Every goal card has a hover trash can (always visible on touch) → deletes immediately, no confirm; year chips have a tiny ×.
+- Week board: sidebar (on the RIGHT) = this month's goals with linked-week-item counts + bars (0 = red, "not distributing evenly"); clicking a goal focuses it and quick-adds link to it.
 - Week items are NOT linked to tasks — they're context for the chat LLM (read-only for it).
 
-**Calendar** (`/plan?view=calendar`, v13): read-only Google Calendar via the iCal secret URL (`user_settings.ics_url`, owner-only RLS). Browsers can't fetch Google's feed (CORS) — always go through `fn-calendar-events`. `calendar_cache` is select-only for the owner; only the edge fn (service role) writes it. Week view = Mon–Sun time grid: click = 1h block, drag = custom block (15-min snap), drag body = move (across days), bottom edge = resize; tray tasks drop onto a block (`time_block_tasks`) or onto empty grid (new 1h block with that task). All-day row shows all-day ICS events + LifeOS tasks due that day. Month view click → that week. Mode remembered in localStorage `calMode`.
+**Calendar** (`/plan?view=calendar`, v13): read-only Google Calendar via the iCal secret URL (`user_settings.ics_url`, owner-only RLS). Browsers can't fetch Google's feed (CORS) — always go through `fn-calendar-events`. `calendar_cache` is select-only for the owner; only the edge fn (service role) writes it. Week view = Mon–Sun time grid: click = 1h block, drag = custom block (15-min snap), drag body = move (across days), bottom edge = resize; tray tasks drop onto a block (`time_block_tasks`) or onto empty grid (new 1h block with that task). All-day row (hidden when empty) shows all-day ICS events + pending LifeOS `event`s only — regular tasks and anything done are deliberately NOT drawn on the grid (user: duplicate data / wasted space); blocks hide their done tasks too. Month view click → that week. Mode remembered in localStorage `calMode`.
 
 **Press feedback**: `globals.css` has a global `:active` scale for `button`, `[role=button]`, `.app-nav a`, `.btn-like`. It's unlayered, so its `transition-property` list must include color props or it'd override Tailwind `transition-colors`. Motion utilities: `animate-fade-in|slide-up|slide-in-right|pop|shrink-out`.

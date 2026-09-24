@@ -100,7 +100,7 @@ export function WeekBoard({ monthKey }: { monthKey: string }) {
       <div className="flex flex-col lg:flex-row gap-4 items-start">
         {/* ── Pinned month goals ── */}
         <aside
-          className="w-full lg:w-72 shrink-0 lg:sticky lg:top-4 rounded-xl p-3"
+          className="w-full lg:w-72 shrink-0 lg:order-2 lg:sticky lg:top-4 rounded-xl p-3"
           style={{ background: '#DEDAD2', border: '1px solid rgba(28,26,20,0.08)' }}
         >
           <div className="flex items-baseline justify-between mb-1">
@@ -187,7 +187,7 @@ export function WeekBoard({ monthKey }: { monthKey: string }) {
         </aside>
 
         {/* ── Week columns ── */}
-        <div className="flex gap-3 overflow-x-auto pb-4 w-full -mx-4 px-4 sm:mx-0 sm:px-0 snap-x">
+        <div className="flex gap-3 overflow-x-auto pb-4 w-full min-w-0 lg:order-1 -mx-4 px-4 sm:mx-0 sm:px-0 snap-x">
           {weeks.map((monday, wi) => {
             const col = column(monday)
             return (
@@ -219,6 +219,7 @@ export function WeekBoard({ monthKey }: { monthKey: string }) {
                         onDragStart={() => setDrag(g.id)}
                         onDragEnd={() => setDrag(null)}
                         onDropBefore={() => dropInto(monday, g.id)}
+                        onDelete={() => remove(g.id)}
                       />
                     )
                   })}
