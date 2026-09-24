@@ -194,14 +194,14 @@ web/app/
   layout.tsx                     # IBM Plex Mono font via next/font/google
   (app)/layout.tsx               # auth guard + <NavBar /> (left sidebar) + <QuickNotesWidget /> (global, bottom-right)
   (app)/dashboard/page.tsx       # LCD metrics panel + overdue contacts + DashboardUpNext — still exists as a route, but no longer in nav; post-login redirect goes to /tasks instead
-  (app)/tasks/page.tsx           # 50/50 split: A screen (left) = TaskList, B screen (right) = DayCalendar (today's time grid) / TaskDetailPane (selected via TaskSelectionProvider). A-screen task rows drag straight onto B-screen time blocks
+  (app)/tasks/page.tsx           # 50/50 split: A screen (left) = TaskList, B screen (right) = BScreen tabs CHAT (ChatPanel) | TODAY (DayCalendar); TaskDetailPane overlays it when a task is selected (B screen stays mounted underneath). A-screen task rows drag onto TODAY blocks (dragging over the TODAY tab switches to it)
   (app)/calendar/page.tsx        # redirects to /plan?view=calendar
   (app)/plan/page.tsx            # Planner: ?view=calendar → CalendarView, else BOARD (year-goal strip + month kanban, MonthBoard)
   (app)/settings/page.tsx        # SettingsForm — Google Calendar iCal URL (masked once saved, validated by an immediate sync)
   (app)/plan/[month]/page.tsx    # week kanban for YYYY-MM (WeekBoard) — pinned month goals w/ linked-count bars
   (app)/session/page.tsx         # active focus sessions list + new-session form + × delete per card (inline confirm; cascades session_tasks/rounds, tasks stay)
   (app)/session/[id]/page.tsx    # focus session timer — phase-colored full-screen, SessionTaskPanel, End/Lockin modals (client component, useParams)
-  (app)/braindump/page.tsx       # 50/50 split: form left, right = persisted history feed (one card per past dump, newest first, loaded from braindump_jobs.result so it survives reload). Each card has its own "🔍 Debug reasoning" panel and its own reprompt/adjust box (reprompting creates a new card, doesn't mutate the old one)
+  (app)/braindump/page.tsx       # (hidden route — DUMP tab removed from nav; the chat replaces it. Mobile still uses braindump_jobs) 50/50 split: form left, right = persisted history feed (one card per past dump, newest first, loaded from braindump_jobs.result so it survives reload). Each card has its own "🔍 Debug reasoning" panel and its own reprompt/adjust box (reprompting creates a new card, doesn't mutate the old one)
   (app)/notes/                   # list (with filter bar), new, [id]
   (app)/search/page.tsx          # semantic search via fn-search-notes
   (app)/contacts/                # list (inline ContactTierPicker per card), new (structured profile fields), [id] (ContactTierPicker in header; ContactProfile section shows title/education/location/email/phone/linkedin/why-good/less-useful/rating/next-step when present). Overdue math everywhere uses `contact_tier` via CONTACT_TIER_DAYS — NOT `relationship_tier`/TIER_INTERVALS (detail page used to, was a bug)
@@ -209,15 +209,19 @@ web/lib/
   supabase/{client,server,middleware}.ts
   types.ts                       # all shared TypeScript types (Task, Subtask, PersistedTaskGroup, FocusSession, SessionTask, ...)
   planDates.ts                   # local YYYY-MM-DD month/week math (weeksOfMonth, mondayOf, addMonths…) — never toISOString (UTC shift)
+  chat.ts                        # sendChat/applyChat → fn-chat, ChatMessage/Proposal types, CHAT_COMMANDS, DATA_CHANGED event (notifyDataChanged → TaskList + useCalendarData refetch)
+  useVoiceRecorder.ts            # mic → fn-transcribe hook (chat composer)
   calendar.ts                    # TASK_DRAG_TYPE (TaskList rows + tray set it), CalEvent/TimeBlock types, BLOCK_COLORS, fetchCalendar() → fn-calendar-events, layoutLanes() overlap layout
   planGoals.ts                   # category colors, STATUS_META, reorderColumn() for kanban drops
   sessionTimer.ts                # remainingSeconds() / formatMMSS() — wall-clock timer math for focus sessions
   taskSelection.tsx              # TaskSelectionProvider + useTaskSelection() — which task the B-screen detail pane shows
   contactMerge.ts                # applyPendingContact() — client-side insert/update + contact_events write, mirrors edge fn merge policy
 web/components/
-  NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / PLAN / SESSION / DUMP / NOTES / PEOPLE (TODAY/dashboard tab removed)
+  NavBar.tsx                     # left sidebar nav (72px, analog gradient, IBM Plex Mono labels, usePathname active state) — TASKS / PLAN / SESSION / NOTES / PEOPLE + ⚙ SET + OUT (DUMP and TODAY/dashboard tabs removed)
   calendar/                      # useCalendarData (events poll + tasks + block CRUD, shared), CalendarView (/plan week/month + task tray), DayCalendar (/tasks B screen, today only, no tray), WeekGrid (1–7 day time grid, pointer-capture create/move/resize, HTML5 task drop), MonthGrid, BlockEditor, CalendarStatus
-  SettingsForm.tsx               # /settings
+  SettingsForm.tsx               # /settings (calendar) + AssistantSettings.tsx (model, monthly budget + spend bar, memory editor)
+  BScreen.tsx                    # /tasks B screen tabs CHAT | TODAY (localStorage `bTab`), both mounted
+  chat/                          # ChatPanel (thread per local day, history dropdown, slash-command menu, mic, typing dots, proposal cards, Confirm all), ProposalCard, Markdown (safe mini renderer)
   plan/                          # MonthBoard, WeekBoard, BoardColumn, GoalCard, GoalEditor, usePlanGoals (optimistic CRUD + rollback)
   TaskList.tsx                   # A screen: add/complete/rollover/delete, "Keep in Touch" section, drag-to-reorder + drag between groups, priority mode, persisted group view (calls fn-group-tasks), nested subtasks
   TaskDetailPane.tsx             # B screen: selected task's description + subtasks editor
@@ -291,6 +295,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | `fn-group-tasks` | HTTP POST from TaskList | DeepSeek (`response_format: json_object`) groups `{id,title}[]` into ≤6 named/colored themes; returns `[]` groups if <3 tasks. Only checks `Bearer` header is present, doesn't call `getUser()` |
 | `fn-transcribe` | HTTP POST (multipart) from `/braindump` | Groq Whisper speech-to-text for uploaded audio; verifies JWT |
 | `fn-calendar-events` | HTTP POST `{from,to,refresh?}` from CalendarView / SettingsForm (JWT) | Google Calendar ICS → `_shared/calendar.ts` `getCalendarEvents()`: serves `calendar_cache` if <15 min old and covering the range, else fetches `user_settings.ics_url`, expands via `_shared/ics.ts` (`npm:ical.js`, window −60d…+180d), upserts cache; on failure returns stale cache + `error`. Never echoes the URL. |
+| `fn-chat` | HTTP POST from ChatPanel (JWT) | The chat harness — see "Chat harness" section. `{action:'send', text, tz}` / `{action:'apply', message_id, decisions}` |
 | `fn-widget-data` | HTTP GET from iOS widget | Returns today's tasks for a `widget_id` (no JWT — uses `widget_registrations` table) |
 | `fn-widget-action` | HTTP POST from iOS widget | Complete or rollover a task; auth via `widget_id` credential |
 
@@ -298,11 +303,15 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 
 **Queue functions (`fn-embed-note`, `fn-process-braindump`) auth contract** — `_shared/auth.ts` `resolveCaller()`: service caller → drains everyone's queue; signed-in user → drains only their own rows. A caller is "service" if the token equals env `SUPABASE_SERVICE_ROLE_KEY` **or** is a gateway-verified JWT with `role: service_role` (the functions gateway has `verify_jwt: true`, so the signature is already checked). **Never deploy `fn-embed-note` or `fn-process-braindump` with `--no-verify-jwt`** — `resolveCaller` decodes the JWT payload without verifying it and relies on the gateway having rejected forged signatures; without that, anyone could send `{"role":"service_role"}` and drain every user's queue. The second branch is required: the pg_cron jobs send the legacy service-role JWT and env `SUPABASE_SERVICE_ROLE_KEY` is a different string, so plain equality 401'd every cron tick for 14 minutes on 2026-09-17 (06:46–07:00) and nothing processed. Anon key is no longer accepted — `curl` with the anon key gets 401; use the service JWT from `select command from cron.job` or a real user session token.
 
-**`supabase/functions/_shared/`** — first shared modules across edge fns (`auth.ts`, `noteText.ts`, `taskGrouping.ts`). `supabase functions deploy <fn>` bundles them automatically (confirmed in `get_edge_function` output). Pure helpers (`noteText`, `taskGrouping`) are unit-tested in `tests/`.
+**`supabase/functions/_shared/`** — shared modules across edge fns (`auth.ts`, `noteText.ts`, `taskGrouping.ts`, `embed.ts` (jinaEmbed/cosine), `contacts.ts` (namesCollide/mergePatch — braindump + chat), `ics.ts`, `calendar.ts`, `chatCore.ts`, `chatTools.ts`).
+**Type-check edge functions**: Deno isn't installed but `npx -y deno@2 check fn-chat/index.ts` (from `supabase/functions/`) works. `fn-process-braindump` has pre-existing `call.function` TS errors from newer openai typings — runtime is fine.
+`supabase functions deploy <fn>` bundles them automatically (confirmed in `get_edge_function` output). Pure helpers are unit-tested in `tests/`.
+**Editing via python heredocs mangles escapes** (`\b` → backspace char, `\n` → real newline) — use the Edit tool for anything with backslashes.
 
 **Tests** (no framework; run from repo root):
 - `node --test tests/ai-regressions.test.mjs` — transpiles the `_shared/*.ts` helpers + `web/lib/sessionTimer.ts` with the web app's TypeScript and asserts on chunking, group normalization, timer resume.
 - `node --test tests/planner.test.mjs` — `web/lib/planDates.ts` week/month math.
+- `node --test tests/chat-core.test.mjs` — `_shared/chatCore.ts` (cost math, short-id resolution, tz dates, zonedToUtcIso across DST, slash-command parsing, compaction cut) + `_shared/contacts.ts` merge policy.
 - `node --test tests/ics.test.mjs` — `_shared/ics.ts` against `tests/fixtures/calendar.ics` (EXDATE, moved/cancelled RECURRENCE-ID overrides, DST, all-day, 10-year-old daily series). Uses `web/node_modules/ical.js` (devDependency).
 - `tests/note-indexing.sql` — paste into SQL Editor / `execute_sql`; `begin … rollback` so it leaves nothing behind; asserts `finish_note_processing` rejects stale claims + bad vectors, keeps `category_locked`, and is not executable by `authenticated`.
 `fn-widget-data` and `fn-widget-action` use `widget_registrations.widget_id` as the auth credential (no JWT — widget can't store tokens).
@@ -364,9 +373,9 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 | 20 — Focus sessions | ✅ Done — `/session` Pomodoro timer, session tasks, lockin rating per round, Skip Break, keep/discard on end |
 | 21 — Persisted task groups + infinite subtasks | ✅ Done — `task_groups` table, `group_id`, `parent_subtask_id`, drag between groups |
 | 22 — Quick notes widget | ✅ Done — global bottom-right tabbed scratchpad, hover open/close, localStorage drafts |
-| 23 — Rework (spec: `docs/superpowers/specs/2026-09-23-harness-planner-design.md`) | 🚧 Chunk 0 ✅ (session delete, press animations) · Chunk 1 ✅ Planner board · Chunk 2 ✅ Calendar/ICS · Chunk 3 Chat harness |
+| 23 — Rework (spec: `docs/superpowers/specs/2026-09-23-harness-planner-design.md`) | 🚧 Chunk 0 ✅ (session delete, press animations) · Chunk 1 ✅ Planner board · Chunk 2 ✅ Calendar/ICS · Chunk 3 ✅ Chat harness |
 
-**Migrations applied**: `migrations_v3.sql` through `migrations_v13.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed, v12 `plan_goals`, v13 `user_settings`/`calendar_cache`/`time_blocks`/`time_block_tasks`). All `.sql` files are committed.
+**Migrations applied**: `migrations_v3.sql` through `migrations_v14.sql` are all applied to the live DB (v7 sessions, v8 session_rounds, v9 task_groups + nested subtasks, v10 `category_locked` + `finish_note_processing`, v11 `notes.last_error` + `note_chunks.embedding` → `vector(1024)` + full note re-embed, v12 `plan_goals`, v13 `user_settings`/`calendar_cache`/`time_blocks`/`time_block_tasks`, v14 `chat_threads`/`chat_messages`/`chat_memories` + `contacts.category`). All `.sql` files are committed.
 
 ## What's Working Right Now (Sep 2026)
 
@@ -420,3 +429,17 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 **Calendar** (`/plan?view=calendar`, v13): read-only Google Calendar via the iCal secret URL (`user_settings.ics_url`, owner-only RLS). Browsers can't fetch Google's feed (CORS) — always go through `fn-calendar-events`. `calendar_cache` is select-only for the owner; only the edge fn (service role) writes it. Week view = Mon–Sun time grid: click = 1h block, drag = custom block (15-min snap), drag body = move (across days), bottom edge = resize; tray tasks drop onto a block (`time_block_tasks`) or onto empty grid (new 1h block with that task). All-day row (hidden when empty) shows all-day ICS events + pending LifeOS `event`s only — regular tasks and anything done are deliberately NOT drawn on the grid (user: duplicate data / wasted space); blocks hide their done tasks too. Month view click → that week. Mode remembered in localStorage `calMode`. Tasks already in a block render darker (`.task-scheduled` in globals.css + "◷ 2pm" chip) — in the /plan tray and in the /tasks A-screen TaskList, via `lib/scheduledTasks.tsx` context (DayCalendar publishes `scheduledTaskMap(blocks)`; outside the provider nothing is scheduled). Each task line inside a block has an × to unassign; task rows share the block height (1 task → up to 16px bold, many → down to 9px, overflow → "+N more").
 
 **Press feedback**: `globals.css` has a global `:active` scale for `button`, `[role=button]`, `.app-nav a`, `.btn-like`. It's unlayered, so its `transition-property` list must include color props or it'd override Tailwind `transition-colors`. Motion utilities: `animate-fade-in|slide-up|slide-in-right|pop|shrink-out`.
+
+## Chat harness (`fn-chat`, v14)
+
+B screen CHAT tab on `/tasks`. DeepSeek (`deepseek-v4-flash` default, `/model` → `deepseek-v4-pro`; stored in `user_settings.chat_model`), **thinking mode disabled**, non-streaming (reply arrives whole), tool loop ≤6 rounds / 100 s.
+- **Threads**: one `chat_threads` row per user-local day (`tz` sent by client). Past days viewable read-only via the header dropdown.
+- **Context each turn** (`buildSystemPrompt`): persona (efficient but warm), memories, planner (year + current month + current week, read-only), pending today+overdue tasks and next 7 days as `id8 | title | due | ★ | ↻n | group`, today's calendar (ICS + time blocks + LifeOS events), overdue contacts, last day's recap, today's thread summary. Priority weighting order is in the persona: due date → overdue contacts → calendar load → rollover count → goals, group similar tasks.
+- **Tools** (`_shared/chatTools.ts`): READ run immediately (`list_tasks`, `get_task`, `search_notes`, `list_contacts`, `get_contact`, `get_calendar`, `get_plan`, `remember`). WRITE never touch data — they become **proposals** stored on the assistant `chat_messages.proposals` (`create_tasks` w/ Jina near-dup warning, `update_tasks` (rename/reschedule/★/done), `delete_tasks`, `add_subtasks`, `upsert_contact` (category family/work/friend/other; name collision → `choices` the user picks), `create_note`, `schedule_block`). `{action:'apply'}` loads proposals by id from the DB (client never sends args), re-validates, applies, marks `applied|rejected|failed` — idempotent. Planner is read-only for the chat by design; no session tools.
+- Model ids are 8-hex short ids resolved by unique prefix (`resolveId`).
+- **Guard**: if a reply claims an action ("queued…") with no proposal, the loop nudges the model once to actually call the tool (`CLAIMS_ACTION`). Seen in testing before the guard.
+- **Memory (Claude-Code style)**: `remember` auto-saves (the one exception to confirm-first; shown as 📝 chip, editable in /settings). Compaction: first message of a new day summarizes the previous thread → `chat_threads.summary` + extracts ≤5 durable facts → `chat_memories`; in-thread compaction when history > ~12k tokens (keeps ~5k tail).
+- **Cost**: per-turn `usage` × DeepSeek PEAK prices (`PRICES` in chatCore, checked 2026-09-24) → `chat_messages.cost_usd`. Monthly cap `user_settings.chat_budget_usd` (default $5) — over cap the fn refuses. Measured ≈ $0.001–0.0015 per message on Flash (3–8k prompt tokens).
+- Commands: `/prioritize` (ask 2–4 questions, then ranked plan + minimal proposals), `/model [flash|pro]`, `/memory`, `/help` — the last three don't call the model.
+- Bulk insert of the user+assistant rows uses `defaultToNull: false` — without it PostgREST writes NULL (not the default) for keys only one row has (`cost_usd` NOT NULL blew up).
+- After Confirm, ChatPanel fires `DATA_CHANGED`; TaskList refetches today's tasks, `useCalendarData` reloads blocks.

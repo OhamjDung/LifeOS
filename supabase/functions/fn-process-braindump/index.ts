@@ -1,5 +1,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { resolveCaller } from '../_shared/auth.ts'
+import { cosineSimilarity, jinaEmbed } from '../_shared/embed.ts'
+import { mergePatch, namesCollide } from '../_shared/contacts.ts'
 import OpenAI from 'npm:openai'
 
 const supabase = createClient(
@@ -11,22 +13,6 @@ const openai = new OpenAI({
   baseURL: 'https://api.deepseek.com',
   apiKey: Deno.env.get('DEEPSEEK_TOKEN')!,
 })
-
-async function jinaEmbed(inputs: string[]): Promise<number[][]> {
-  const res = await fetch('https://api.jina.ai/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${Deno.env.get('JINA_API_KEY')}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ model: 'jina-embeddings-v3', input: inputs, task: 'retrieval.passage', dimensions: 1024 }),
-  })
-  const json = await res.json()
-  if (!res.ok || !json.data) {
-    throw new Error(`Jina embeddings failed (${res.status}): ${JSON.stringify(json)}`)
-  }
-  return json.data.map((d: { embedding: number[] }) => d.embedding)
-}
 
 const tasksTool = {
   type: 'function' as const,
@@ -104,24 +90,6 @@ const contactsTool = {
       required: ['contacts'],
     },
   },
-}
-
-// "Mark" ⊂ "Mark Sampelo" counts as a match; so does exact (case/punct-insensitive) equality.
-function nameTokens(name: string): string[] {
-  return name.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
-}
-function namesCollide(a: string, b: string): boolean {
-  const ta = nameTokens(a), tb = nameTokens(b)
-  if (ta.length === 0 || tb.length === 0) return false
-  const subset = (x: string[], y: string[]) => x.every(t => y.includes(t))
-  return subset(ta, tb) || subset(tb, ta)
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  const dot = a.reduce((sum, v, i) => sum + v * b[i], 0)
-  const magA = Math.sqrt(a.reduce((sum, v) => sum + v * v, 0))
-  const magB = Math.sqrt(b.reduce((sum, v) => sum + v * v, 0))
-  return dot / (magA * magB)
 }
 
 interface Outcome {
@@ -313,9 +281,6 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
 
     if (contacts.length > 0) trace(`model extracted ${contacts.length} contact(s): ${JSON.stringify(contacts)}`)
     const existingIds = new Set(existingContacts.map(c => c.id))
-    // Free-text debrief fields accumulate across dumps; everything else is overwritten by newer info.
-    const APPEND_FIELDS = ['why_good_contact', 'less_useful_for', 'rating'] as const
-    const OVERWRITE_FIELDS = ['title', 'education', 'location', 'email', 'phone', 'linkedin', 'next_step', 'contact_tier', 'relationship_tier'] as const
 
     for (const c of contacts) {
       if (!c.name) continue
@@ -371,14 +336,7 @@ Existing contacts: ${JSON.stringify(existingContacts.map(c => ({ id: c.id, name:
           trace(`FETCH ERROR for existing contact ${existing_id}: ${fetchErr?.message}`)
           continue
         }
-        const patch: Record<string, string> = {}
-        for (const k of OVERWRITE_FIELDS) {
-          if (fields[k]) patch[k] = fields[k]!
-        }
-        for (const k of APPEND_FIELDS) {
-          if (fields[k]) patch[k] = current[k] ? `${current[k]}\n${fields[k]}` : fields[k]!
-        }
-        if (fields.how_we_met && !current.how_we_met) patch.how_we_met = fields.how_we_met
+        const patch = mergePatch(current, fields)
         trace(`updating contact "${current.name}" (${existing_id}) fields: ${Object.keys(patch).join(', ') || '(none)'}`)
         if (Object.keys(patch).length > 0) {
           const { error: updErr } = await supabase

@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { CalendarResult, TimeBlock, fetchCalendar } from '@/lib/calendar'
 import { parseYmd } from '@/lib/planDates'
 import { DayTask } from './WeekGrid'
+import { DATA_CHANGED } from '@/lib/chat'
 
 type BlockRow = Omit<TimeBlock, 'tasks'> & { time_block_tasks: { task_id: string; tasks: { id: string; title: string; status: string } | null }[] }
 type BlockPatch = Partial<Pick<TimeBlock, 'start_at' | 'end_at' | 'title' | 'color'>>
@@ -60,6 +61,13 @@ export function useCalendarData(rangeStart: string, rangeEnd: string) {
     const t = setInterval(() => loadCalendar(), POLL_MS)
     return () => clearInterval(t)
   }, [loadCalendar, loadLocal])
+
+  // Chat-applied changes (e.g. schedule_block) → reload blocks + tasks.
+  useEffect(() => {
+    const reload = () => { loadLocal() }
+    window.addEventListener(DATA_CHANGED, reload)
+    return () => window.removeEventListener(DATA_CHANGED, reload)
+  }, [loadLocal])
 
   async function createBlock(start_at: string, end_at: string, task?: { id: string; title: string }) {
     setError(null)

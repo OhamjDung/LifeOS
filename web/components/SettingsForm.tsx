@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fetchCalendar } from '@/lib/calendar'
+import { AssistantSettings } from './AssistantSettings'
 
 const card = 'rounded-xl p-4 sm:p-5 bg-gray-900 border border-gray-700'
 
@@ -111,6 +112,7 @@ export function SettingsForm() {
           </p>
         )}
       </section>
+      <AssistantSettings />
     </div>
   )
 }

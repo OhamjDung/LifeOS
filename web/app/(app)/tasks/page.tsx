@@ -3,7 +3,7 @@ import { Task, Contact } from '@/lib/types'
 import { TaskList } from '@/components/TaskList'
 import { TaskDetailPane } from '@/components/TaskDetailPane'
 import { TaskSelectionProvider } from '@/lib/taskSelection'
-import { DayCalendar } from '@/components/calendar/DayCalendar'
+import { BScreen } from '@/components/BScreen'
 import { ScheduledTasksProvider } from '@/lib/scheduledTasks'
 
 export default async function TasksPage() {
@@ -58,10 +58,10 @@ export default async function TasksPage() {
         />
       </div>
 
-      {/* Right (B screen): today's time grid / Task detail */}
+      {/* Right (B screen): chat | today's time grid, or the selected task's detail */}
       <div className="w-full lg:w-1/2 p-4 sm:p-6 overflow-y-auto min-w-0">
       <TaskDetailPane>
-        <DayCalendar />
+        <BScreen />
       </TaskDetailPane>
       </div>
     </div>

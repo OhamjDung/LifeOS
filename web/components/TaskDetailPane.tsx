@@ -14,15 +14,22 @@ const cardStyle = {
 export function TaskDetailPane({ children }: { children: ReactNode }) {
   const { selected, select } = useTaskSelection()
 
-  if (!selected) return <>{children}</>
-
+  // Children (chat / today grid) stay mounted while a task is open, so an in-flight
+  // chat reply or calendar state survives opening and closing the detail view.
   return (
-    <TaskDetail
-      key={selected.id}
-      task={selected}
-      onClose={() => select(null)}
-      onUpdate={updated => select(updated)}
-    />
+    <>
+      <div className={selected ? 'hidden' : ''}>{children}</div>
+      {selected && (
+        <div className="animate-slide-in-right">
+          <TaskDetail
+            key={selected.id}
+            task={selected}
+            onClose={() => select(null)}
+            onUpdate={updated => select(updated)}
+          />
+        </div>
+      )}
+    </>
   )
 }
 

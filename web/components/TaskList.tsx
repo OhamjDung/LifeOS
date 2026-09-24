@@ -6,6 +6,7 @@ import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/l
 import { useTaskSelection } from '@/lib/taskSelection'
 import { TASK_DRAG_TYPE } from '@/lib/calendar'
 import { useScheduledTasks } from '@/lib/scheduledTasks'
+import { DATA_CHANGED } from '@/lib/chat'
 
 type GroupColor = TaskGroupColor
 
@@ -131,6 +132,30 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     setTasks(prev => prev.map(t => (t.id === selected.id ? selected : t)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
+
+  // The chat (B screen) applies changes server-side; refetch today's list when it does.
+  // Same query + shaping as tasks/page.tsx.
+  useEffect(() => {
+    const client = createClient()
+    const refetch = async () => {
+      const { data } = await client
+        .from('tasks')
+        .select('*, task_tags(tag_id, tags(id,name)), subtasks(*)')
+        .eq('due_date', today)
+        .neq('status', 'rolled_over')
+        .order('rollover_count', { ascending: false })
+        .order('created_at', { ascending: true })
+        .order('sort_order', { foreignTable: 'subtasks', ascending: true })
+      if (!data) return
+      type Raw = Task & { task_tags?: { tags: { id: string; name: string } | null }[] }
+      setTasks((data as Raw[]).map(t => ({
+        ...t,
+        tags: (t.task_tags ?? []).map(tt => tt?.tags).filter((x): x is { id: string; name: string } => !!x),
+      })))
+    }
+    window.addEventListener(DATA_CHANGED, refetch)
+    return () => window.removeEventListener(DATA_CHANGED, refetch)
+  }, [today])
 
   useEffect(() => {
     supabase
