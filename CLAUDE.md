@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Start every message with "Yes, Thomas"
 
+## Rollback point
+
+**`be2d2e7`** (git tag `baseline-pre-harness`, 2026-09-23) = last version before the big rework (tasks page → tasks + AI chat harness, new Planner tab, Notion Calendar ICS sync). To go back: `git checkout baseline-pre-harness` (look) or `git reset --hard baseline-pre-harness` (discard everything after — destructive). Redeploy after reverting web code.
+
 ## graphify
 
 This project has a graphify knowledge graph at graphify-out/.
