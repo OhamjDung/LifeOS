@@ -1,13 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { FocusSession } from '@/lib/types'
-import { remainingSeconds, formatMMSS, resumedStartedAt } from '@/lib/sessionTimer'
+import { formatMMSS } from '@/lib/sessionTimer'
+import { useFocusSession } from '@/lib/useFocusSession'
+import { playChime, setSoundEnabled, soundEnabled, unlockAudio } from '@/lib/chime'
 import { SessionTaskPanel } from '@/components/SessionTaskPanel'
 import { EndSessionModal } from '@/components/EndSessionModal'
 import { LockinRatingModal } from '@/components/LockinRatingModal'
+import { useFloatingTimer } from '@/components/session/FloatingTimer'
 
 const WORK_BG = '#1C1A14'
 const BREAK_BG = '#DEDAD2'
@@ -16,66 +17,26 @@ const IDLE_BG = '#CCCAC0'
 export default function SessionDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
-  const supabase = createClient()
   const sessionId = params.id
-
-  const [session, setSession] = useState<FocusSession | null>(null)
-  const savingRef = useRef(false)
-  const [saveError, setSaveError] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [remaining, setRemaining] = useState(0)
+  const { session, loaded, remaining, saveError, pause, resume, startBreak, startNextRound } =
+    useFocusSession(sessionId, { setTitle: true })
+  const { poppedId, popOut, closePopOut } = useFloatingTimer()
   const [showEndModal, setShowEndModal] = useState(false)
   const [showRatingModal, setShowRatingModal] = useState(false)
+  const [sound, setSound] = useState(true)
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from('sessions').select('*').eq('id', sessionId).single()
-      setSession(data as FocusSession)
-      setLoaded(true)
-    })()
-  }, [sessionId, supabase])
+  useEffect(() => { setSound(soundEnabled()) }, []) // eslint-disable-line react-hooks/set-state-in-effect -- localStorage is client-only
 
-  useEffect(() => {
-    if (!session) return
-    const initial = setTimeout(() => setRemaining(remainingSeconds(session)), 0)
-    const interval = setInterval(() => setRemaining(remainingSeconds(session)), 1000)
-    return () => { clearTimeout(initial); clearInterval(interval) }
-  }, [session])
-
-  const updateSession = useCallback(async (patch: Partial<FocusSession>) => {
-    if (!session || savingRef.current) return
-    savingRef.current = true
-    setSaveError('')
-    const next = { ...session, ...patch }
-    setSession(next)
-    try {
-      const { error } = await supabase.from('sessions').update(patch).eq('id', session.id)
-      if (error) throw error
-    } catch { setSession(session); setSaveError('Could not save timer change. Please retry.') }
-    finally { savingRef.current = false }
-  }, [session, supabase])
-
-  function pause() {
-    updateSession({ phase_started_at: null, phase_remaining_seconds: session ? remainingSeconds(session) : remaining })
-  }
-
-  function resume() {
-    if (!session) return
-    updateSession({ phase_started_at: resumedStartedAt(session), phase_remaining_seconds: null })
-  }
-
-  function startBreak() {
-    updateSession({ phase: 'break', phase_started_at: new Date().toISOString(), phase_remaining_seconds: null })
-  }
-
-  function startNextRound() {
-    if (!session) return
-    updateSession({
-      phase: 'work',
-      round: session.round + 1,
-      phase_started_at: new Date().toISOString(),
-      phase_remaining_seconds: null,
-    })
+  function toggleSound() {
+    const next = !sound
+    setSound(next)
+    setSoundEnabled(next)
+    if (next) {
+      unlockAudio()
+      playChime('work-done') // preview so you know what it sounds like
+      // Desktop notification too, for when the tab is in the background.
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission().catch(() => {})
+    }
   }
 
   if (!loaded) return <div className="p-4 sm:p-8 text-gray-400 text-sm">Loading…</div>
@@ -85,28 +46,50 @@ export default function SessionDetailPage() {
   const bg = session.phase === 'work' ? WORK_BG : session.phase === 'break' ? BREAK_BG : IDLE_BG
   const fg = session.phase === 'work' ? '#DEDAD2' : '#1C1A14'
   const atZero = remaining <= 0
+  const poppedHere = poppedId === session.id
 
   return (
     <div className="min-h-full p-4 sm:p-8 transition-colors duration-500" style={{ background: bg, color: fg }}>
       {saveError && <p role="alert" className="mb-3">{saveError}</p>}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between gap-2 mb-8">
         <button onClick={() => router.push('/session')} className="text-sm opacity-70 hover:opacity-100">
           ← All sessions
         </button>
-        <button
-          onClick={() => setShowEndModal(true)}
-          className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          End Session
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleSound}
+            aria-pressed={sound}
+            title={sound ? 'Chime when the timer ends (click to mute)' : 'Muted — click to turn the chime on'}
+            className="px-3 py-2 rounded-lg border text-sm opacity-80 hover:opacity-100"
+            style={{ borderColor: fg }}
+          >
+            {sound ? '🔔' : '🔕'}
+          </button>
+          <button
+            onClick={() => (poppedHere ? closePopOut() : popOut(session.id))}
+            title="Float the timer in its own always-on-top window you can move and resize"
+            className="px-3 py-2 rounded-lg border text-sm font-medium opacity-80 hover:opacity-100"
+            style={{ borderColor: fg }}
+          >
+            {poppedHere ? '⤢ Dock timer' : '⧉ Pop out'}
+          </button>
+          <button
+            onClick={() => setShowEndModal(true)}
+            className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            End Session
+          </button>
+        </div>
       </div>
 
       <div className="text-center mb-10">
         <h2 className="text-lg font-medium mb-1">{session.title || 'Untitled session'}</h2>
         <p className="text-xs uppercase tracking-widest opacity-60 mb-6">
-          {session.phase} · round {session.round}{isPaused ? ' · paused' : ''}
+          {session.phase} · round {session.round}{isPaused ? ' · paused' : ''}{poppedHere ? ' · popped out' : ''}
         </p>
-        <p className="text-7xl font-mono font-bold mb-8">{formatMMSS(remaining)}</p>
+        <p className={`text-7xl font-mono font-bold mb-8 ${atZero && session.phase_started_at ? 'animate-pulse' : ''}`}>
+          {formatMMSS(remaining)}
+        </p>
 
         <div className="flex items-center justify-center gap-3">
           {isPaused ? (
@@ -142,7 +125,7 @@ export default function SessionDetailPage() {
         <EndSessionModal
           sessionId={session.id}
           onClose={() => setShowEndModal(false)}
-          onEnded={() => router.push('/session')}
+          onEnded={() => { if (poppedHere) closePopOut(); router.push('/session') }}
         />
       )}
 
