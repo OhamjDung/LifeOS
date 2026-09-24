@@ -4,6 +4,7 @@ import { TaskList } from '@/components/TaskList'
 import { TaskDetailPane } from '@/components/TaskDetailPane'
 import { TaskSelectionProvider } from '@/lib/taskSelection'
 import { DayCalendar } from '@/components/calendar/DayCalendar'
+import { ScheduledTasksProvider } from '@/lib/scheduledTasks'
 
 export default async function TasksPage() {
   const supabase = await createClient()
@@ -37,6 +38,7 @@ export default async function TasksPage() {
 
   return (
     <TaskSelectionProvider>
+    <ScheduledTasksProvider>
     <div className="flex flex-col lg:flex-row lg:h-screen">
       {/* Left: Task list */}
       <div
@@ -63,6 +65,7 @@ export default async function TasksPage() {
       </TaskDetailPane>
       </div>
     </div>
+    </ScheduledTasksProvider>
     </TaskSelectionProvider>
   )
 }

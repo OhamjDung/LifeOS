@@ -110,3 +110,12 @@ export function layoutLanes<T extends { startMin: number; endMin: number }>(item
   if (cluster.length) flush()
   return out
 }
+
+/** task id → start-time label of its earliest block (open tasks only). */
+export function scheduledTaskMap(blocks: TimeBlock[]): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const b of [...blocks].sort((a, c) => a.start_at.localeCompare(c.start_at))) {
+    for (const t of b.tasks) if (t.status !== 'done' && !m.has(t.id)) m.set(t.id, formatTime(b.start_at))
+  }
+  return m
+}

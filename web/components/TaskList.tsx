@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/lib/types'
 import { useTaskSelection } from '@/lib/taskSelection'
 import { TASK_DRAG_TYPE } from '@/lib/calendar'
+import { useScheduledTasks } from '@/lib/scheduledTasks'
 
 type GroupColor = TaskGroupColor
 
@@ -928,6 +929,7 @@ function TaskRow({
   onDueCancel: () => void
 }) {
   const isDone = task.status === 'done'
+  const scheduledAt = useScheduledTasks().scheduled.get(task.id)
   const isEvent = task.task_type === 'event'
   const isContact = !!task.contact_id
   const rolls = task.rollover_count ?? 0
@@ -947,7 +949,10 @@ function TaskRow({
     <div>
     <div
       onClick={onSelect}
-      className={`group flex items-center gap-3 px-4 py-3 bg-gray-900 border rounded-xl hover:border-gray-700 cursor-pointer transition-opacity ${
+      title={scheduledAt && !isDone ? `In a time block at ${scheduledAt}` : undefined}
+      className={`group flex items-center gap-3 px-4 py-3 border rounded-xl hover:border-gray-700 cursor-pointer transition-colors ${
+        scheduledAt && !isDone ? 'task-scheduled' : 'bg-gray-900'
+      } ${
         isEvent ? 'border-indigo-900/60' : 'border-gray-800'
       } ${rolls >= 3 ? 'border-l-2 border-l-orange-500' : ''} ${isOptimistic ? 'opacity-60' : ''} ${
         priorityMode && isStagedPriority ? 'ring-2 ring-yellow-500/70 border-yellow-600/60' : ''
@@ -987,6 +992,9 @@ function TaskRow({
             <div className="flex items-center gap-2">
               {task.is_priority && <span className="text-xs text-yellow-500 shrink-0">★</span>}
               {isEvent && <span className="text-xs text-indigo-400 shrink-0">📅</span>}
+              {scheduledAt && !isDone && (
+                <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#1C1A14]/10 text-indigo-950">◷ {scheduledAt}</span>
+              )}
               <span
                 className={`text-sm truncate ${isDone ? 'line-through text-gray-500' : 'text-gray-200'}`}
                 onDoubleClick={e => {

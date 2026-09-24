@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { BlockColor, TASK_DRAG_TYPE } from '@/lib/calendar'
+import { BlockColor, TASK_DRAG_TYPE, scheduledTaskMap } from '@/lib/calendar'
 import { addDays, mondayOf, monthLabel, parseYmd, weekLabel, ymd } from '@/lib/planDates'
 import { DayTask, WeekGrid } from './WeekGrid'
 import { MonthGrid } from './MonthGrid'
@@ -56,7 +56,7 @@ export function CalendarView() {
   }
 
   const events = cal?.events ?? []
-  const scheduled = new Set(blocks.flatMap(b => b.tasks.map(t => t.id)))
+  const scheduled = scheduledTaskMap(blocks)
   const today = ymd(new Date())
   const trayShown = tray.filter(t => !trayQuery || t.title.toLowerCase().includes(trayQuery.toLowerCase()))
   const active = blocks.find(b => b.id === openBlock)
@@ -100,6 +100,7 @@ export function CalendarView() {
               onUpdateBlock={updateBlock}
               onOpenBlock={setOpenBlock}
               onAssignTask={assignTask}
+              onUnassignTask={unassignTask}
             />
             <p className="mt-1.5 text-[10px] text-gray-500">
               Click or drag on the grid to block time · drag a block to move, its bottom edge to resize · drop tasks onto a block to assign them.
@@ -124,10 +125,13 @@ export function CalendarView() {
                       e.dataTransfer.setData(TASK_DRAG_TYPE, JSON.stringify({ id: t.id, title: t.title }))
                       e.dataTransfer.effectAllowed = 'copy'
                     }}
-                    className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg bg-[#EAE7E0] border border-black/5 cursor-grab active:cursor-grabbing hover:shadow-sm"
+                    title={scheduled.has(t.id) ? `In a time block at ${scheduled.get(t.id)}` : undefined}
+                    className={`flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg border cursor-grab active:cursor-grabbing hover:shadow-sm transition-colors ${
+                      scheduled.has(t.id) ? 'task-scheduled' : 'bg-[#EAE7E0] border-black/5'
+                    }`}
                   >
                     <span className="flex-1 truncate text-white">{t.title}</span>
-                    {scheduled.has(t.id) && <span title="Already in a block this view" className="text-indigo-600">◷</span>}
+                    {scheduled.has(t.id) && <span className="text-[9px] font-semibold text-indigo-950">◷ {scheduled.get(t.id)}</span>}
                     <span className={`text-[9px] ${overdue ? 'text-red-700' : 'text-gray-500'}`}>
                       {t.due_date === today ? 'today' : parseYmd(t.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>

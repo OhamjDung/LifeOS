@@ -42,6 +42,7 @@ export function WeekGrid({
   onUpdateBlock,
   onOpenBlock,
   onAssignTask,
+  onUnassignTask,
   height = 'min(70vh, 720px)',
 }: {
   /** 1 (day view) to 7 (week view) consecutive days */
@@ -53,6 +54,7 @@ export function WeekGrid({
   onUpdateBlock: (id: string, patch: { start_at: string; end_at: string }) => void
   onOpenBlock: (id: string) => void
   onAssignTask: (blockId: string, task: { id: string; title: string }) => void
+  onUnassignTask: (blockId: string, taskId: string) => void
   height?: string
 }) {
   const n = days.length
@@ -271,6 +273,18 @@ export function WeekGrid({
                       }
                       const b = item.block
                       const { c, label } = blockBody(b, item.startMin, item.endMin)
+                      // Task rows share the block's height: one task gets big type, many
+                      // shrink toward 9px; whatever still doesn't fit collapses into "+N".
+                      const open = b.tasks.filter(t => t.status !== 'done')
+                      const showTitle = !!b.title || open.length === 0
+                      const showTime = height > 30
+                      const avail = Math.max(0, height - 8 - (showTitle ? 13 : 0) - (showTime ? 12 : 0))
+                      const fs = open.length
+                        ? clamp(Math.floor((avail / open.length) * 0.6), 9, open.length === 1 ? 16 : 13)
+                        : 10
+                      const fit = Math.max(1, Math.floor(avail / (fs * 1.3 + 2)))
+                      const shown = fit >= open.length ? open : open.slice(0, Math.max(0, fit - 1))
+                      const hiddenCount = open.length - shown.length
                       return (
                         <div
                           key={item.key}
@@ -294,11 +308,29 @@ export function WeekGrid({
                           } ${b.id.startsWith('temp-') ? 'opacity-70' : ''}`}
                           style={{ ...style, background: c.bg, color: c.fg, borderLeft: `3px solid ${c.border}`, boxShadow: '0 1px 3px rgba(28,26,20,0.15)' }}
                         >
-                          <div className="font-semibold truncate">{b.title || (b.tasks[0]?.title ?? 'Block')}</div>
-                          {height > 30 && <div className="opacity-70">{label}</div>}
-                          {b.tasks.filter(t => t.status !== 'done').map(t => (
-                            <div key={t.id} className="truncate">☐ {t.title}</div>
-                          ))}
+                          <div className="flex flex-col h-full">
+                            {showTime && <div className="opacity-70 shrink-0">{label}</div>}
+                            {showTitle && <div className="font-semibold truncate shrink-0">{b.title || 'Block'}</div>}
+                            <div className={`flex-1 min-h-0 flex flex-col ${open.length === 1 && !b.title ? 'justify-center' : ''}`}>
+                              {shown.map(t => (
+                                <div key={t.id} className="group/task flex items-center gap-1 min-w-0 animate-fade-in" style={{ fontSize: fs, lineHeight: 1.3 }}>
+                                  <span className={`flex-1 truncate ${open.length === 1 ? 'font-semibold' : ''}`}>{t.title}</span>
+                                  <button
+                                    type="button"
+                                    // Don't let the press start a block move / open the editor.
+                                    onPointerDown={e => e.stopPropagation()}
+                                    onClick={e => { e.stopPropagation(); onUnassignTask(b.id, t.id) }}
+                                    aria-label={`Remove ${t.title} from this block`}
+                                    title="Remove from block"
+                                    className="shrink-0 w-4 h-4 flex items-center justify-center rounded text-[11px] leading-none hover:bg-black/15 [@media(hover:hover)]:opacity-40 [@media(hover:hover)]:group-hover/task:opacity-100"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                              {hiddenCount > 0 && <div className="opacity-70 text-[9px]">+{hiddenCount} more</div>}
+                            </div>
+                          </div>
                           <div
                             onPointerDown={e => onBlockPointerDown(e, b, di, true)}
                             className="absolute left-0 right-0 bottom-0 h-2 cursor-ns-resize"

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { BlockColor } from '@/lib/calendar'
+import { useEffect, useState } from 'react'
+import { BlockColor, scheduledTaskMap } from '@/lib/calendar'
+import { useScheduledTasks } from '@/lib/scheduledTasks'
 import { addDays, ymd } from '@/lib/planDates'
 import { WeekGrid } from './WeekGrid'
 import { BlockEditor } from './BlockEditor'
@@ -19,6 +20,8 @@ export function DayCalendar() {
     createBlock, updateBlock, deleteBlock, assignTask, unassignTask,
   } = useCalendarData(today, addDays(today, 1))
   const [openBlock, setOpenBlock] = useState<string | null>(null)
+  const { setScheduled } = useScheduledTasks()
+  useEffect(() => { setScheduled(scheduledTaskMap(blocks)) }, [blocks, setScheduled])
   const active = blocks.find(b => b.id === openBlock)
 
   return (
@@ -53,6 +56,7 @@ export function DayCalendar() {
         onUpdateBlock={updateBlock}
         onOpenBlock={setOpenBlock}
         onAssignTask={assignTask}
+        onUnassignTask={unassignTask}
       />
 
       {active && (
