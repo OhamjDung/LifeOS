@@ -413,7 +413,7 @@ All in `supabase/functions/`. Each uses Deno + `jsr:@supabase/supabase-js@2` + `
 `plan_goals` (v12) — one table for all levels: `level` year|month|week, `title`, `description`, `category` (free text; presets School/Career/Health/Social/Personal/Finance get fixed colors), `status` not_started|in_progress|done, `period_start`/`period_end` (year = Jan 1; month = 1st; week = Monday; `period_end` > start only for multi-month month goals), `parent_id` (week→month goal, month→year goal, `on delete set null`), `sort_order`.
 - A week belongs to the month its **Monday** is in (weeks Mon–Sun).
 - Month board: current month + 3 (`+ 3 more`), multi-month goals render in every column they cover; dragging shifts start+end by the same month delta. Hovering a year-goal chip highlights its month goals.
-- Every goal card has a hover trash can (always visible on touch) → deletes immediately, no confirm; year chips have a tiny ×.
+- Every goal card has a hover trash can (always visible on touch) → deletes immediately, no confirm; year chips have a tiny ×. Plus `TrashDropZone`: fixed top-right bin on both boards — faint when idle, grows while a card is dragged, drop = delete.
 - Week board: sidebar (on the RIGHT) = this month's goals with linked-week-item counts + bars (0 = red, "not distributing evenly"); clicking a goal focuses it and quick-adds link to it.
 - Week items are NOT linked to tasks — they're context for the chat LLM (read-only for it).
 

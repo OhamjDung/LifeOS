@@ -9,6 +9,7 @@ import { GoalPatch, usePlanGoals } from './usePlanGoals'
 import { GoalCard } from './GoalCard'
 import { GoalEditor } from './GoalEditor'
 import { BoardColumn } from './BoardColumn'
+import { TrashDropZone } from './TrashDropZone'
 
 type Editor = { goal: PlanGoal } | { newLevel: 'week'; period: string } | { newLevel: 'month'; period: string } | null
 
@@ -229,6 +230,11 @@ export function WeekBoard({ monthKey }: { monthKey: string }) {
           })}
         </div>
       </div>
+
+      <TrashDropZone
+        dragging={!!drag}
+        onDrop={() => { if (drag) remove(drag); setDrag(null) }}
+      />
 
       {editor && (() => {
         const goal = 'goal' in editor ? editor.goal : undefined
