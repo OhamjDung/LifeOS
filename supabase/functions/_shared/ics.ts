@@ -11,6 +11,30 @@ export interface CalEvent {
   end: string
   allDay: boolean
   location: string | null
+  /** short hash of the feed URL it came from (set by mergeFeeds) */
+  src?: string
+}
+
+/** Human label for a feed URL: the Google calendar id (not secret), else the host. */
+export function feedLabel(url: string): string {
+  const m = url.match(/\/ical\/([^/]+)\//)
+  if (m) { try { return decodeURIComponent(m[1]) } catch { return m[1] } }
+  try { return new URL(url.replace(/^webcal:/i, 'https:')).host } catch { return 'calendar' }
+}
+
+/** Tag each feed's events with its src, drop cross-feed duplicates (same invite in two calendars), sort. */
+export function mergeFeeds(feeds: { src: string; events: CalEvent[] }[]): CalEvent[] {
+  const seen = new Set<string>()
+  const out: CalEvent[] = []
+  for (const f of feeds) {
+    for (const e of f.events) {
+      const key = `${e.uid}|${e.start}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ ...e, src: f.src })
+    }
+  }
+  return out.sort((a, b) => a.start.localeCompare(b.start))
 }
 
 // deno-lint-ignore no-explicit-any

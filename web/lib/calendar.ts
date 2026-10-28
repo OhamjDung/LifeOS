@@ -12,6 +12,14 @@ export interface CalEvent {
   end: string   // exclusive
   allDay: boolean
   location: string | null
+  src?: string  // short hash of the feed it came from
+}
+
+/** Same as _shared/ics.ts feedLabel: Google calendar id from an iCal URL (not the secret part), else the host. */
+export function feedLabel(url: string): string {
+  const m = url.match(/\/ical\/([^/]+)\//)
+  if (m) { try { return decodeURIComponent(m[1]) } catch { return m[1] } }
+  try { return new URL(url.replace(/^webcal:/i, 'https:')).host } catch { return 'calendar' }
 }
 
 export interface CalendarResult {
