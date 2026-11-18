@@ -55,8 +55,8 @@ export default function ResolveContactsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-orange-900/50 bg-gray-900 flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-fade-in">
+      <div className="animate-modal-in w-full max-w-lg rounded-xl border border-orange-900/50 bg-gray-900 flex flex-col max-h-[85vh]">
         <div className="px-5 py-4 border-b border-gray-800">
           <h3 className="text-lg font-bold text-white">Which contact?</h3>
           <p className="text-xs text-gray-500 mt-1">

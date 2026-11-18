@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { BlockColor, TASK_DRAG_TYPE, scheduledTaskMap } from '@/lib/calendar'
+import { startLiftedDrag } from '@/lib/liftedDrag'
 import { addDays, mondayOf, monthLabel, parseYmd, weekLabel, ymd } from '@/lib/planDates'
 import { DayTask, WeekGrid } from './WeekGrid'
 import { MonthGrid } from './MonthGrid'
@@ -124,6 +125,7 @@ export function CalendarView() {
                     onDragStart={e => {
                       e.dataTransfer.setData(TASK_DRAG_TYPE, JSON.stringify({ id: t.id, title: t.title }))
                       e.dataTransfer.effectAllowed = 'copy'
+                      startLiftedDrag(e, e.currentTarget)
                     }}
                     title={scheduled.has(t.id) ? `In a time block at ${scheduled.get(t.id)}` : undefined}
                     className={`flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg border cursor-grab active:cursor-grabbing hover:shadow-sm transition-colors ${

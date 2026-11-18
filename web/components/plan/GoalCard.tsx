@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { PlanGoal } from '@/lib/types'
 import { categoryColor, STATUS_META } from '@/lib/planGoals'
+import { startLiftedDrag } from '@/lib/liftedDrag'
 
 export function GoalCard({
   goal,
@@ -41,7 +42,7 @@ export function GoalCard({
       draggable={!goal.id.startsWith('temp-') && !removing}
       onClick={onOpen}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; onDragStart() }}
+      onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; startLiftedDrag(e, e.currentTarget); onDragStart() }}
       onDragEnd={onDragEnd}
       onDragOver={e => e.preventDefault()}
       onDrop={e => { e.preventDefault(); e.stopPropagation(); onDropBefore() }}

@@ -29,8 +29,8 @@ export function LockinRatingModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#DEDAD2] text-[#1C1A14] rounded-xl p-6 max-w-sm w-full text-center">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+      <div className="animate-modal-in bg-[#DEDAD2] text-[#1C1A14] rounded-xl p-6 max-w-sm w-full text-center">
         <h3 className="text-lg font-bold mb-1">Round {round} done</h3>
         <p className="text-sm opacity-70 mb-5">How locked in were you?</p>
 

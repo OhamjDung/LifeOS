@@ -47,8 +47,8 @@ export function EndSessionModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#DEDAD2] text-[#1C1A14] rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+      <div className="animate-modal-in bg-[#DEDAD2] text-[#1C1A14] rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
         <h3 className="text-lg font-bold mb-1">End session</h3>
         <p className="text-sm opacity-70 mb-4">
           Choose which tasks created in this session to keep. Existing tasks you added are always kept.

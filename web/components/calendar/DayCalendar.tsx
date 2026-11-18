@@ -7,10 +7,11 @@ import { addDays, ymd } from '@/lib/planDates'
 import { WeekGrid } from './WeekGrid'
 import { BlockEditor } from './BlockEditor'
 import { CalendarStatus } from './CalendarStatus'
+import { CalendarFeedsMenu, useHiddenFeeds } from './CalendarFeedsMenu'
 import { useCalendarData } from './useCalendarData'
 
 /**
- * Today-only time grid for the /tasks B screen. No task tray: rows in the
+ * Today → tomorrow (48h, one continuous column) time grid for the /tasks B screen. No task tray: rows in the
  * A-screen TaskList carry TASK_DRAG_TYPE, so they drop straight onto blocks.
  */
 export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
@@ -18,8 +19,9 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
   const {
     cal, calLoading, calError, loadCalendar, tasks, blocks, error, setError,
     createBlock, updateBlock, deleteBlock, assignTask, unassignTask,
-  } = useCalendarData(today, addDays(today, 1))
+  } = useCalendarData(today, addDays(today, 2)) // grid runs on through tomorrow
   const [openBlock, setOpenBlock] = useState<string | null>(null)
+  const [hiddenFeeds, toggleFeed] = useHiddenFeeds()
   const { setScheduled } = useScheduledTasks()
   useEffect(() => { setScheduled(scheduledTaskMap(blocks)) }, [blocks, setScheduled])
   const active = blocks.find(b => b.id === openBlock)
@@ -36,6 +38,7 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
         <span className="text-[10px] text-gray-500" aria-live="polite">
           {calLoading ? 'syncing…' : cal?.fetched_at ? `synced ${new Date(cal.fetched_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
         </span>
+        <CalendarFeedsMenu hidden={hiddenFeeds} onToggle={toggleFeed} onChanged={() => loadCalendar(true)} />
         <button
           onClick={() => loadCalendar(true)}
           disabled={calLoading}
@@ -51,7 +54,8 @@ export function DayCalendar({ compact = false }: { compact?: boolean } = {}) {
 
       <WeekGrid
         days={[today]}
-        events={cal?.events ?? []}
+        spanDays={2}
+        events={(cal?.events ?? []).filter(e => !e.src || !hiddenFeeds.has(e.src))}
         tasks={tasks}
         blocks={blocks}
         height={compact ? 'calc(100vh - 56px)' : 'calc(100dvh - 190px)'}

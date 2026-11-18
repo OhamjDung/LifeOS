@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { IBM_Plex_Mono } from 'next/font/google'
+import { Agentation } from 'agentation'
 import './globals.css'
 
 const ibmPlexMono = IBM_Plex_Mono({
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${ibmPlexMono.className} ${ibmPlexMono.variable} antialiased min-h-screen`}>
         {children}
+        {process.env.NODE_ENV === 'development' && <Agentation endpoint="http://localhost:4747" />}
       </body>
     </html>
   )

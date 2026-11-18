@@ -74,7 +74,7 @@ body {
   font-family: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
 }
 
-:root { color-scheme: light; }
+:root { color-scheme: light; --ease-out: cubic-bezier(0.23, 1, 0.32, 1); }
 body { margin: 0; -webkit-font-smoothing: antialiased; }
 :where(button, a, input, textarea, select):focus-visible { outline: 2px solid #516439; outline-offset: 3px; }
 button:disabled { cursor: not-allowed; }
@@ -117,7 +117,15 @@ button:disabled { cursor: not-allowed; }
 .animate-slide-up { animation: slide-up 220ms cubic-bezier(.2, .8, .2, 1) both; }
 .animate-slide-in-right { animation: slide-in-right 240ms cubic-bezier(.2, .8, .2, 1) both; }
 .animate-pop { animation: pop 260ms cubic-bezier(.2, .8, .2, 1) both; }
-.animate-shrink-out { animation: shrink-out 160ms ease-in both; }
+/* Exits use ease-out too: ease-in delays the first frames the user is watching. */
+.animate-shrink-out { animation: shrink-out 160ms var(--ease-out) both; }
+
+/* Modals aren't anchored to a trigger, so they scale from center. Popovers scale from the
+   trigger's corner (top-right here: the Calendars button sits at the right edge). */
+@keyframes modal-in { from { opacity: 0; transform: scale(.96) translateY(6px) } to { opacity: 1; transform: none } }
+@keyframes popover-in { from { opacity: 0; transform: scale(.95) } to { opacity: 1; transform: none } }
+.animate-modal-in { animation: modal-in 200ms var(--ease-out) both; }
+.animate-popover-in { animation: popover-in 150ms var(--ease-out) both; transform-origin: top right; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }

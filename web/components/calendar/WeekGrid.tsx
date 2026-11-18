@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  BLOCK_COLORS, CalEvent, TASK_DRAG_TYPE, TimeBlock, allDayDays, formatTime, layoutLanes, minutesInDay,
+  BLOCK_COLORS, CalEvent, TASK_DRAG_TYPE, TimeBlock, allDayDays, formatTime, layoutLanes,
 } from '@/lib/calendar'
-import { parseYmd, ymd } from '@/lib/planDates'
+import { addDays, parseYmd, ymd } from '@/lib/planDates'
 
 export type DayTask = { id: string; title: string; status: string; task_type: string; due_date: string }
 
@@ -27,10 +27,17 @@ function toIso(day: string, minute: number): string {
   return d.toISOString()
 }
 
+/** Minutes from local midnight of `day` to an instant — unclamped (negative = before, >1440 = a later day). */
+function rawMin(iso: string, day: string): number {
+  return Math.round((Date.parse(iso) - parseYmd(day).getTime()) / 60000)
+}
+
+/** Clock label for a minute offset; wraps, so -60 → 11pm and 1500 → 1am. */
 function fmtMin(m: number): string {
-  const h = Math.floor(m / 60), mm = m % 60
+  const w = ((Math.round(m) % DAY_MIN) + DAY_MIN) % DAY_MIN
+  const h = Math.floor(w / 60), mm = w % 60
   const h12 = h % 12 === 0 ? 12 : h % 12
-  return `${h12}${mm ? ':' + String(mm).padStart(2, '0') : ''}${h < 12 || h === 24 ? 'am' : 'pm'}`
+  return `${h12}${mm ? ':' + String(mm).padStart(2, '0') : ''}${h < 12 ? 'am' : 'pm'}`
 }
 
 export function WeekGrid({
@@ -44,6 +51,7 @@ export function WeekGrid({
   onAssignTask,
   onUnassignTask,
   height = 'min(70vh, 720px)',
+  spanDays = 1,
 }: {
   /** 1 (day view) to 7 (week view) consecutive days */
   days: string[]
@@ -56,8 +64,11 @@ export function WeekGrid({
   onAssignTask: (blockId: string, task: { id: string; title: string }) => void
   onUnassignTask: (blockId: string, taskId: string) => void
   height?: string
+  /** How many consecutive days each column runs through (2 = the column continues past midnight into the next day). */
+  spanDays?: number
 }) {
   const n = days.length
+  const SPAN = spanDays * DAY_MIN
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag>(null)
@@ -74,7 +85,7 @@ export function WeekGrid({
   function pos(e: { clientX: number; clientY: number }) {
     const rect = gridRef.current!.getBoundingClientRect()
     const day = clamp(Math.floor(((e.clientX - rect.left) / rect.width) * n), 0, n - 1)
-    const minute = clamp(((e.clientY - rect.top) / HOUR_PX) * 60, 0, DAY_MIN)
+    const minute = clamp(((e.clientY - rect.top) / HOUR_PX) * 60, 0, SPAN)
     return { day, minute }
   }
 
@@ -82,7 +93,7 @@ export function WeekGrid({
   function onGridPointerDown(e: React.PointerEvent) {
     if (e.button !== 0 || e.target !== e.currentTarget) return
     const { day, minute } = pos(e)
-    const m = clamp(Math.floor(minute / SNAP) * SNAP, 0, DAY_MIN - SNAP)
+    const m = clamp(Math.floor(minute / SNAP) * SNAP, 0, SPAN - SNAP)
     e.currentTarget.setPointerCapture(e.pointerId)
     setDrag({ kind: 'create', day, anchor: m, cur: m + SNAP })
   }
@@ -90,8 +101,10 @@ export function WeekGrid({
     if (e.button !== 0 || b.id.startsWith('temp-')) return
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
-    const start = minutesInDay(b.start_at, days[dayIdx])
-    const end = minutesInDay(b.end_at, days[dayIdx])
+    // True (unclamped) offsets: a block that crosses midnight is drawn as a clipped
+    // segment, but dragging it must keep its real start and length.
+    const start = rawMin(b.start_at, days[dayIdx])
+    const end = rawMin(b.end_at, days[dayIdx])
     if (resize) setDrag({ kind: 'resize', id: b.id, day: dayIdx, start, end })
     else setDrag({ kind: 'move', id: b.id, day: dayIdx, start, dur: end - start, grab: pos(e).minute - start, moved: false, x0: e.clientX, y0: e.clientY })
   }
@@ -99,12 +112,13 @@ export function WeekGrid({
     if (!drag) return
     const p = pos(e)
     if (drag.kind === 'create') {
-      setDrag({ ...drag, cur: clamp(snap(p.minute), 0, DAY_MIN) })
+      setDrag({ ...drag, cur: clamp(snap(p.minute), 0, SPAN) })
     } else if (drag.kind === 'resize') {
-      setDrag({ ...drag, end: clamp(snap(p.minute), drag.start + SNAP, DAY_MIN) })
+      setDrag({ ...drag, end: clamp(snap(p.minute), Math.max(drag.start, 0) + SNAP, SPAN) })
     } else {
       const moved = drag.moved || Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) > 4
-      setDrag({ ...drag, moved, day: p.day, start: clamp(snap(p.minute - drag.grab), 0, DAY_MIN - drag.dur) })
+      // May hang over either edge of the column — that's how a block crosses midnight.
+      setDrag({ ...drag, moved, day: p.day, start: clamp(snap(p.minute - drag.grab), SNAP - drag.dur, SPAN - SNAP) })
     }
   }
   function onPointerUp() {
@@ -114,7 +128,8 @@ export function WeekGrid({
     if (d.kind === 'create') {
       let start = Math.min(d.anchor, d.cur), end = Math.max(d.anchor, d.cur)
       // A plain click makes a 1-hour block, like Notion Calendar.
-      if (end - start <= SNAP) end = Math.min(DAY_MIN, start + 60)
+      // (Late at night it simply runs on past midnight.)
+      if (end - start <= SNAP) end = start + 60
       if (end - start < SNAP) start = end - SNAP
       onCreateBlock(toIso(days[d.day], start), toIso(days[d.day], end))
     } else if (d.kind === 'resize') {
@@ -133,7 +148,7 @@ export function WeekGrid({
     e.preventDefault()
     const task = JSON.parse(raw) as { id: string; title: string }
     const { day, minute } = pos(e)
-    const start = clamp(Math.floor(minute / SNAP) * SNAP, 0, DAY_MIN - 60)
+    const start = clamp(Math.floor(minute / SNAP) * SNAP, 0, SPAN - SNAP)
     onCreateBlock(toIso(days[day], start), toIso(days[day], start + 60), task)
   }
 
@@ -147,23 +162,22 @@ export function WeekGrid({
 
   type Item =
     | { kind: 'ics'; key: string; startMin: number; endMin: number; ev: CalEvent }
-    | { kind: 'block'; key: string; startMin: number; endMin: number; block: TimeBlock }
+    | { kind: 'block'; key: string; startMin: number; endMin: number; block: TimeBlock; rawStart: number; rawEnd: number }
+  const inCol = (m: number) => clamp(m, 0, SPAN)
   const perDay: Item[][] = days.map(day => {
-    const dayStart = parseYmd(day).getTime()
-    const dayEnd = dayStart + DAY_MIN * 60000
     const items: Item[] = []
     for (const ev of events) {
       if (ev.allDay) continue
-      const s = Date.parse(ev.start), en = Date.parse(ev.end)
-      if (s >= dayEnd || Math.max(en, s + 1) <= dayStart) continue
-      const startMin = minutesInDay(ev.start, day)
-      items.push({ kind: 'ics', key: `${ev.uid}-${ev.start}`, startMin, endMin: Math.max(startMin + 20, minutesInDay(ev.end, day)), ev })
+      const s = rawMin(ev.start, day), en = rawMin(ev.end, day)
+      if (s >= SPAN || Math.max(en, s + 1) <= 0) continue
+      const startMin = inCol(s)
+      items.push({ kind: 'ics', key: `${ev.uid}-${ev.start}`, startMin, endMin: Math.max(startMin + 20, inCol(en)), ev })
     }
     for (const b of blocks) {
       if (drag && drag.kind !== 'create' && drag.id === b.id) continue // drawn as the drag preview
-      const s = Date.parse(b.start_at), en = Date.parse(b.end_at)
-      if (s >= dayEnd || en <= dayStart) continue
-      items.push({ kind: 'block', key: b.id, startMin: minutesInDay(b.start_at, day), endMin: minutesInDay(b.end_at, day), block: b })
+      const s = rawMin(b.start_at, day), en = rawMin(b.end_at, day)
+      if (s >= SPAN || en <= 0) continue
+      items.push({ kind: 'block', key: b.id, startMin: inCol(s), endMin: inCol(en), block: b, rawStart: s, rawEnd: en })
     }
     return items
   })
@@ -230,8 +244,8 @@ export function WeekGrid({
           {/* Time grid */}
           <div ref={scrollRef} className="relative overflow-y-auto" style={{ height }}>
             <div className="grid" style={{ gridTemplateColumns: '52px 1fr' }}>
-              <div className="relative" style={{ height: 24 * HOUR_PX }}>
-                {Array.from({ length: 24 }, (_, h) => (
+              <div className="relative" style={{ height: (SPAN / 60) * HOUR_PX }}>
+                {Array.from({ length: SPAN / 60 }, (_, h) => (
                   <div key={h} className="absolute right-1.5 text-[10px] text-gray-500 -translate-y-1/2" style={{ top: h * HOUR_PX }}>
                     {h === 0 ? '' : fmtMin(h * 60)}
                   </div>
@@ -242,7 +256,7 @@ export function WeekGrid({
                 className={`relative grid select-none touch-none ${drag?.kind === 'create' ? 'cursor-ns-resize' : 'cursor-crosshair'}`}
                 style={{
                   gridTemplateColumns: `repeat(${n}, 1fr)`,
-                  height: 24 * HOUR_PX,
+                  height: (SPAN / 60) * HOUR_PX,
                   backgroundImage: `repeating-linear-gradient(to bottom, var(--cal-line) 0 1px, transparent 1px ${HOUR_PX}px)`,
                 }}
                 onPointerDown={onGridPointerDown}
@@ -272,19 +286,18 @@ export function WeekGrid({
                         )
                       }
                       const b = item.block
-                      const { c, label } = blockBody(b, item.startMin, item.endMin)
-                      // Task rows share the block's height: one task gets big type, many
-                      // shrink toward 9px; whatever still doesn't fit collapses into "+N".
+                      const { c, label } = blockBody(b, item.rawStart, item.rawEnd)
+                      // Continues below this column (next day in week view): the bottom edge isn't its real end.
+                      const cutOff = item.rawEnd > SPAN
+                      // Tasks split the block side by side: 1 task = full width, 2 = halves,
+                      // 3 = thirds… Each column wraps its title; type shrinks as columns narrow.
                       const open = b.tasks.filter(t => t.status !== 'done')
                       const showTitle = !!b.title || open.length === 0
                       const showTime = height > 30
                       const avail = Math.max(0, height - 8 - (showTitle ? 13 : 0) - (showTime ? 12 : 0))
-                      const fs = open.length
-                        ? clamp(Math.floor((avail / open.length) * 0.6), 9, open.length === 1 ? 16 : 13)
-                        : 10
-                      const fit = Math.max(1, Math.floor(avail / (fs * 1.3 + 2)))
-                      const shown = fit >= open.length ? open : open.slice(0, Math.max(0, fit - 1))
-                      const hiddenCount = open.length - shown.length
+                      const maxFs = [16, 16, 13, 12, 11][open.length] ?? 10
+                      const fs = open.length ? clamp(Math.floor(avail * 0.6), 9, maxFs) : 10
+                      const lines = Math.max(1, Math.floor((avail - 2) / (fs * 1.25)))
                       return (
                         <div
                           key={item.key}
@@ -311,10 +324,20 @@ export function WeekGrid({
                           <div className="flex flex-col h-full">
                             {showTime && <div className="opacity-70 shrink-0">{label}</div>}
                             {showTitle && <div className="font-semibold truncate shrink-0">{b.title || 'Block'}</div>}
-                            <div className={`flex-1 min-h-0 flex flex-col ${open.length === 1 && !b.title ? 'justify-center' : ''}`}>
-                              {shown.map(t => (
-                                <div key={t.id} className="group/task flex items-center gap-1 min-w-0 animate-fade-in" style={{ fontSize: fs, lineHeight: 1.3 }}>
-                                  <span className={`flex-1 truncate ${open.length === 1 ? 'font-semibold' : ''}`}>{t.title}</span>
+                            <div className="flex-1 min-h-0 flex">
+                              {open.map((t, i) => (
+                                <div
+                                  key={t.id}
+                                  className={`group/task relative flex-1 basis-0 min-w-0 flex animate-fade-in ${i > 0 ? 'border-l border-black/15 pl-1' : ''} ${i < open.length - 1 ? 'pr-1' : ''} ${open.length === 1 && !b.title ? 'items-center' : 'items-start'}`}
+                                  style={{ fontSize: fs, lineHeight: 1.25 }}
+                                  title={t.title}
+                                >
+                                  <span
+                                    className={`flex-1 min-w-0 break-words overflow-hidden ${open.length === 1 ? 'font-semibold' : ''}`}
+                                    style={{ display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: lines }}
+                                  >
+                                    {t.title}
+                                  </span>
                                   <button
                                     type="button"
                                     // Don't let the press start a block move / open the editor.
@@ -322,30 +345,43 @@ export function WeekGrid({
                                     onClick={e => { e.stopPropagation(); onUnassignTask(b.id, t.id) }}
                                     aria-label={`Remove ${t.title} from this block`}
                                     title="Remove from block"
-                                    className="shrink-0 w-4 h-4 flex items-center justify-center rounded text-[11px] leading-none hover:bg-black/15 [@media(hover:hover)]:opacity-40 [@media(hover:hover)]:group-hover/task:opacity-100"
+                                    className="shrink-0 w-4 h-4 flex items-center justify-center rounded text-[11px] leading-none hover:bg-black/15 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/task:opacity-100"
                                   >
                                     ×
                                   </button>
                                 </div>
                               ))}
-                              {hiddenCount > 0 && <div className="opacity-70 text-[9px]">+{hiddenCount} more</div>}
                             </div>
                           </div>
-                          <div
-                            onPointerDown={e => onBlockPointerDown(e, b, di, true)}
-                            className="absolute left-0 right-0 bottom-0 h-2 cursor-ns-resize"
-                            aria-hidden
-                          />
+                          {!cutOff && (
+                            <div
+                              onPointerDown={e => onBlockPointerDown(e, b, di, true)}
+                              className="absolute left-0 right-0 bottom-0 h-2 cursor-ns-resize"
+                              aria-hidden
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                    {Array.from({ length: spanDays - 1 }, (_, i) => {
+                      const next = parseYmd(addDays(day, i + 1))
+                      return (
+                        <div key={i} className="absolute left-0 right-0 z-[5]" style={{ top: (i + 1) * 24 * HOUR_PX }}>
+                          <div className="h-[2px] bg-gray-600" />
+                          <div className="absolute right-1 -top-[9px] px-1.5 rounded bg-gray-900 border border-gray-700 text-[9px] font-semibold tracking-wide text-gray-400">
+                            {next.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase()} {next.getDate()}
+                          </div>
                         </div>
                       )
                     })}
                     {pv && pv.day === di && (() => {
                       const { c, label } = blockBody(pv.block, pv.start, pv.end)
+                      const pvTop = inCol(pv.start), pvBottom = inCol(pv.end)
                       return (
                         <div
-                          className="absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 text-[10px] z-10"
+                          className="absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 text-[10px] z-10 overflow-hidden"
                           style={{
-                            top: (pv.start / 60) * HOUR_PX, height: Math.max(12, ((pv.end - pv.start) / 60) * HOUR_PX - 2),
+                            top: (pvTop / 60) * HOUR_PX, height: Math.max(12, ((pvBottom - pvTop) / 60) * HOUR_PX - 2),
                             background: c.bg, color: c.fg, border: `1.5px dashed ${c.border}`, opacity: 0.9,
                           }}
                         >
@@ -354,12 +390,16 @@ export function WeekGrid({
                         </div>
                       )
                     })()}
-                    {day === today && (
-                      <div className="absolute left-0 right-0 z-10" style={{ top: ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_PX }}>
-                        <div className="h-[2px] bg-red-600" />
-                        <div className="absolute -left-1 -top-[3px] w-2 h-2 rounded-full bg-red-600" />
-                      </div>
-                    )}
+                    {(() => {
+                      const nowMin = (now.getTime() - parseYmd(day).getTime()) / 60000
+                      if (nowMin < 0 || nowMin >= SPAN) return null
+                      return (
+                        <div className="absolute left-0 right-0 z-10" style={{ top: (nowMin / 60) * HOUR_PX }}>
+                          <div className="h-[2px] bg-red-600" />
+                          <div className="absolute -left-1 -top-[3px] w-2 h-2 rounded-full bg-red-600" />
+                        </div>
+                      )
+                    })()}
                   </div>
                 ))}
               </div>

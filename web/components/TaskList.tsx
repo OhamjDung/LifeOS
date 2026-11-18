@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Task, Contact, TaskType, PersistedTaskGroup, TaskGroupColor } from '@/lib/types'
+import { startLiftedDrag } from '@/lib/liftedDrag'
 import { useTaskSelection } from '@/lib/taskSelection'
 import { TASK_DRAG_TYPE } from '@/lib/calendar'
 import { useScheduledTasks } from '@/lib/scheduledTasks'
@@ -22,7 +23,10 @@ interface AiGroupSuggestion {
 function markTaskDrag(e: React.DragEvent, task: Task) {
   e.dataTransfer.setData(TASK_DRAG_TYPE, JSON.stringify({ id: task.id, title: task.title }))
   e.dataTransfer.effectAllowed = 'copyMove'
+  startLiftedDrag(e, e.currentTarget as HTMLElement) // opaque lifted card instead of the OS ghost
 }
+
+const ROW_GAP = 8 // matches space-y-2 between rows
 
 const GROUP_COLORS: Record<
   GroupColor,
@@ -116,6 +120,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
   const [groupView, setGroupView] = useState(() => initialTasks.some(t => t.group_id))
   const [persistedGroups, setPersistedGroups] = useState<PersistedTaskGroup[]>([])
   const [groupError, setGroupError] = useState<string | null>(null)
+  const [usedGroupIds, setUsedGroupIds] = useState<Set<string>>(new Set())
+  const [slots, setSlots] = useState<number[]>([]) // row heights + gap, measured at drag start
+  const [newGroupName, setNewGroupName] = useState<string | null>(null) // null = input closed
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
   const [orderBy, setOrderBy] = useState<'created' | 'due'>('created')
   // Priority mode: while active, clicking a row stages/unstages it instead of opening the detail pane.
@@ -163,8 +170,57 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
       .select('*')
       .order('created_at', { ascending: true })
       .then(({ data }) => setPersistedGroups((data as PersistedTaskGroup[]) ?? []))
+    // Groups that still have tasks on other days are hidden when empty today; groups with
+    // no tasks anywhere (manually created, not filled yet) stay visible so they can be used.
+    supabase
+      .from('tasks')
+      .select('group_id')
+      .not('group_id', 'is', null)
+      .then(({ data }) => setUsedGroupIds(new Set((data ?? []).map(r => r.group_id as string))))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const GROUP_COLOR_CYCLE: TaskGroupColor[] = ['indigo', 'orange', 'green', 'yellow', 'rose', 'cyan', 'purple']
+
+  async function createGroup(name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setGroupError(null)
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data, error } = await supabase
+      .from('task_groups')
+      .insert({
+        user_id: user?.id,
+        name: trimmed,
+        color: GROUP_COLOR_CYCLE[persistedGroups.length % GROUP_COLOR_CYCLE.length],
+      })
+      .select()
+      .single()
+    if (error || !data) { setGroupError('Could not create group.'); return }
+    setPersistedGroups(prev => [...prev, data as PersistedTaskGroup])
+    setGroupView(true)
+  }
+
+  async function renameGroup(group: PersistedTaskGroup, name: string) {
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === group.name) return
+    setGroupError(null)
+    setPersistedGroups(prev => prev.map(g => (g.id === group.id ? { ...g, name: trimmed } : g)))
+    const { error } = await supabase.from('task_groups').update({ name: trimmed }).eq('id', group.id)
+    if (error) {
+      setPersistedGroups(prev => prev.map(g => (g.id === group.id ? { ...g, name: group.name } : g)))
+      setGroupError('Could not rename group.')
+    }
+  }
+
+  // Tasks keep existing (tasks.group_id is `on delete set null`) — only the group goes away.
+  async function deleteGroup(group: PersistedTaskGroup) {
+    setGroupError(null)
+    const { error } = await supabase.from('task_groups').delete().eq('id', group.id)
+    if (error) { setGroupError('Could not delete group.'); return }
+    setPersistedGroups(prev => prev.filter(g => g.id !== group.id))
+    setTasks(prev => prev.map(t => (t.group_id === group.id ? { ...t, group_id: null } : t)))
+  }
 
   const mutationLocks = useRef(new Set<string>())
   const [mutationError, setMutationError] = useState('')
@@ -399,15 +455,64 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
     if (error) setTasks(prevTasks)
   }
 
-  function handleDragStart(idx: number, section: 'followUp' | 'pending') {
+  function handleDragStart(e: React.DragEvent, idx: number, section: 'followUp' | 'pending') {
+    // Measure each row's slot once, so neighbours can slide by exact amounts while dragging.
+    const list = (e.currentTarget as HTMLElement).parentElement
+    const rows = list ? Array.from(list.querySelectorAll<HTMLElement>(':scope > [data-drag-idx]')) : []
+    setSlots(rows.map(r => r.offsetHeight + ROW_GAP))
     setDragIdx(idx)
+    setDragOverIdx(idx)
     setDragSection(section)
   }
 
-  function handleDragOver(e: React.DragEvent, idx: number, section: 'followUp' | 'pending') {
+  // Insertion index = how many *other* rows have their centre above the cursor. Uses layout
+  // positions (offsetTop ignores transforms), so rows sliding aside never make it flicker.
+  function handleListDragOver(e: React.DragEvent<HTMLElement>, section: 'followUp' | 'pending') {
+    if (dragIdx === null || dragSection !== section) return
     e.preventDefault()
-    if (section !== dragSection) return
-    setDragOverIdx(idx)
+    const list = e.currentTarget
+    const y = e.clientY - list.getBoundingClientRect().top
+    let ins = 0
+    list.querySelectorAll<HTMLElement>(':scope > [data-drag-idx]').forEach(row => {
+      if (Number(row.dataset.dragIdx) === dragIdx) return
+      if (row.offsetTop + row.offsetHeight / 2 < y) ins++
+    })
+    if (ins !== dragOverIdx) setDragOverIdx(ins)
+  }
+
+  function handleListDragLeave(e: React.DragEvent<HTMLElement>) {
+    // Left the list (e.g. heading for the calendar): put everything back.
+    if (!e.currentTarget.contains(e.relatedTarget as Node) && dragIdx !== null) setDragOverIdx(dragIdx)
+  }
+
+  // How far (px) row `i` of `section` sits from its resting place while a drag is in progress.
+  function shiftFor(i: number, section: 'followUp' | 'pending'): number {
+    if (dragIdx === null || dragOverIdx === null || dragSection !== section || dragOverIdx === dragIdx) return 0
+    const sum = (from: number, to: number) => slots.slice(from, to).reduce((a, b) => a + b, 0)
+    if (i === dragIdx) return dragIdx < dragOverIdx ? sum(dragIdx + 1, dragOverIdx + 1) : -sum(dragOverIdx, dragIdx)
+    if (dragIdx < dragOverIdx && i > dragIdx && i <= dragOverIdx) return -(slots[dragIdx] ?? 0)
+    if (dragIdx > dragOverIdx && i >= dragOverIdx && i < dragIdx) return slots[dragIdx] ?? 0
+    return 0
+  }
+
+  function dragRowProps(idx: number, section: 'followUp' | 'pending', enabled: boolean) {
+    const active = dragIdx !== null && dragSection === section
+    const shift = shiftFor(idx, section)
+    const isSource = active && dragIdx === idx
+    return {
+      'data-drag-idx': idx,
+      className: `${enabled ? 'cursor-grab active:cursor-grabbing' : ''} ${
+        isSource ? 'opacity-50 [&>div]:border-dashed [&>div]:border-indigo-500' : ''
+      }`,
+      style: {
+        transform: shift ? `translateY(${shift}px)` : undefined,
+        // Only animate while a drag is live: on drop the DOM order changes in the same commit,
+        // so the offset must reset instantly or rows would visibly jump back.
+        transition: active ? 'transform 200ms var(--ease-out)' : 'none',
+        position: 'relative' as const,
+        zIndex: isSource ? 1 : undefined,
+      },
+    }
   }
 
   function handleDrop(idx: number, section: 'followUp' | 'pending') {
@@ -602,6 +707,30 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
               <>⊞ {hasGroups ? 'Group View' : 'Group Similar'}</>
             )}
           </button>
+          {newGroupName === null ? (
+            <button
+              type="button"
+              onClick={() => setNewGroupName('')}
+              className="text-xs text-gray-500 hover:text-indigo-300 transition-colors"
+              title="Create a group manually"
+            >
+              + New group
+            </button>
+          ) : (
+            <input
+              autoFocus
+              value={newGroupName}
+              onChange={e => setNewGroupName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { createGroup(newGroupName); setNewGroupName(null) }
+                if (e.key === 'Escape') setNewGroupName(null)
+              }}
+              onBlur={() => { if (newGroupName.trim()) createGroup(newGroupName); setNewGroupName(null) }}
+              placeholder="Group name, Enter"
+              aria-label="New group name"
+              className="animate-fade-in px-2 py-1 bg-gray-800 border border-indigo-500 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none"
+            />
+          )}
           {groupView && (
             <button
               onClick={handleGroupTasks}
@@ -717,11 +846,14 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
         /* Group view — drag a task onto a group card (or the Other section) to move it */
         <div className="space-y-4">
           {persistedGroups
-            .filter(g => tasks.some(t => t.group_id === g.id))
+            .filter(g => tasks.some(t => t.group_id === g.id) || !usedGroupIds.has(g.id))
             .map(group => (
               <GroupCard
                 key={group.id}
                 group={group}
+                draggingId={draggedTaskId}
+                onRename={name => renameGroup(group, name)}
+                onDelete={() => deleteGroup(group)}
                 tasks={tasks}
                 ungroupedTasks={[...followUp, ...pending].filter(t => !t.group_id)}
                 makeRowProps={makeRowProps}
@@ -735,7 +867,9 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
           <div
             onDragOver={e => e.preventDefault()}
             onDrop={() => handleGroupDrop(null)}
-            className="rounded-xl border border-dashed border-gray-700/60 p-3 min-h-[3rem]"
+            className={`rounded-xl border border-dashed p-3 min-h-[3rem] transition-colors duration-150 ${
+              draggedTaskId ? 'border-indigo-500/70 bg-indigo-500/5' : 'border-gray-700/60'
+            }`}
           >
             <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">Other (drop here to ungroup)</p>
             <div className="space-y-2">
@@ -747,7 +881,7 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
                     draggable
                     onDragStart={e => { markTaskDrag(e, task); handleGroupDragStart(task.id) }}
                     onDragEnd={() => setDraggedTaskId(null)}
-                    className="cursor-grab active:cursor-grabbing"
+                    className={`cursor-grab active:cursor-grabbing transition-opacity duration-150 ${draggedTaskId === task.id ? 'opacity-40' : ''}`}
                   >
                     <TaskRow {...makeRowProps(task)} />
                   </div>
@@ -759,21 +893,20 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
         /* Flat list view */
         <>
           {followUp.length > 0 && (
-            <div className="space-y-2 mb-4">
+            <div
+              className="relative space-y-2 mb-4"
+              onDragOver={e => handleListDragOver(e, 'followUp')}
+              onDragLeave={handleListDragLeave}
+              onDrop={() => handleDrop(dragOverIdx ?? -1, 'followUp')}
+            >
               <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">● Keep in Touch</p>
               {followUp.map((task, idx) => (
                 <div
                   key={task.id}
                   draggable
-                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created' && !priorityMode) handleDragStart(idx, 'followUp') }}
-                  onDragOver={e => handleDragOver(e, idx, 'followUp')}
-                  onDrop={() => handleDrop(idx, 'followUp')}
+                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created' && !priorityMode) handleDragStart(e, idx, 'followUp') }}
                   onDragEnd={handleDragEnd}
-                  className={`${orderBy === 'created' && !priorityMode ? 'cursor-grab active:cursor-grabbing' : ''} transition-all ${
-                    dragOverIdx === idx && dragSection === 'followUp' && dragIdx !== idx
-                      ? 'border-t-2 border-indigo-500 pt-0.5'
-                      : ''
-                  } ${dragIdx === idx && dragSection === 'followUp' ? 'opacity-40' : ''}`}
+                  {...dragRowProps(idx, 'followUp', orderBy === 'created' && !priorityMode)}
                 >
                   <TaskRow {...makeRowProps(task)} />
                 </div>
@@ -782,20 +915,19 @@ export function TaskList({ initialTasks, contacts, today }: Props) {
           )}
 
           {pending.length > 0 && (
-            <div className="space-y-2">
+            <div
+              className="relative space-y-2"
+              onDragOver={e => handleListDragOver(e, 'pending')}
+              onDragLeave={handleListDragLeave}
+              onDrop={() => handleDrop(dragOverIdx ?? -1, 'pending')}
+            >
               {pending.map((task, idx) => (
                 <div
                   key={task.id}
                   draggable
-                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created') handleDragStart(idx, 'pending') }}
-                  onDragOver={e => handleDragOver(e, idx, 'pending')}
-                  onDrop={() => handleDrop(idx, 'pending')}
+                  onDragStart={e => { markTaskDrag(e, task); if (orderBy === 'created') handleDragStart(e, idx, 'pending') }}
                   onDragEnd={handleDragEnd}
-                  className={`${orderBy === 'created' ? 'cursor-grab active:cursor-grabbing' : ''} transition-all ${
-                    dragOverIdx === idx && dragSection === 'pending' && dragIdx !== idx
-                      ? 'border-t-2 border-indigo-500 pt-0.5'
-                      : ''
-                  } ${dragIdx === idx && dragSection === 'pending' ? 'opacity-40' : ''}`}
+                  {...dragRowProps(idx, 'pending', orderBy === 'created')}
                 >
                   <TaskRow {...makeRowProps(task)} />
                 </div>
@@ -828,7 +960,13 @@ function GroupCard({
   onDragEndTask,
   onDropTask,
   onAssignTask,
+  onRename,
+  onDelete,
+  draggingId,
 }: {
+  draggingId: string | null
+  onRename: (name: string) => void
+  onDelete: () => void
   group: PersistedTaskGroup
   tasks: Task[]
   ungroupedTasks: Task[]
@@ -839,6 +977,11 @@ function GroupCard({
   onAssignTask: (taskId: string) => void
 }) {
   const [showAdd, setShowAdd] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(group.name)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [removing, setRemoving] = useState(false) // plays the exit before the row is deleted
+  const [over, setOver] = useState(false)
   const colors = GROUP_COLORS[group.color as GroupColor] ?? GROUP_COLORS.indigo
   const groupTasks = tasks.filter(t => t.group_id === group.id)
   const pendingGroupTasks = groupTasks.filter(t => t.status !== 'done')
@@ -848,16 +991,64 @@ function GroupCard({
 
   return (
     <div
-      onDragOver={e => e.preventDefault()}
-      onDrop={onDropTask}
-      className={`rounded-xl border p-4 ${colors.bg} ${colors.border}`}
+      onDragOver={e => { e.preventDefault(); if (draggingId && !over) setOver(true) }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false) }}
+      onDrop={() => { setOver(false); onDropTask() }}
+      className={`rounded-xl border p-4 ${colors.bg} ${colors.border} ${removing ? 'animate-shrink-out pointer-events-none' : 'animate-slide-up'}`}
+      style={{
+        // Lights up and swells a touch while a task hovers over it: "drop here".
+        // (`scale`, not `transform`: the slide-up entrance animation owns `transform`.)
+        scale: over && draggingId ? '1.012' : undefined,
+        boxShadow: over && draggingId ? '0 0 0 2px rgba(81,100,57,0.7), 0 8px 20px rgba(28,26,20,0.14)' : undefined,
+        transition: 'scale 160ms var(--ease-out), box-shadow 160ms var(--ease-out)',
+      }}
     >
       <div className="flex items-center gap-2 mb-2">
         <div className={`w-2 h-2 rounded-full shrink-0 ${colors.dot}`} />
-        <span className={`text-sm font-semibold ${colors.text}`}>{group.name}</span>
+        {renaming ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { onRename(nameDraft); setRenaming(false) }
+              if (e.key === 'Escape') { setNameDraft(group.name); setRenaming(false) }
+            }}
+            onBlur={() => { onRename(nameDraft); setRenaming(false) }}
+            aria-label="Group name"
+            className="min-w-0 flex-1 px-2 py-0.5 bg-field border border-indigo-500 rounded text-sm font-semibold text-white focus:outline-none"
+          />
+        ) : (
+          <span className={`text-sm font-semibold ${colors.text}`}>{group.name}</span>
+        )}
+        <button
+          onClick={() => { setNameDraft(group.name); setRenaming(true) }}
+          className={`text-xs px-1 rounded hover:bg-black/10 ${colors.text}`}
+          title="Rename group"
+          aria-label={`Rename ${group.name}`}
+        >
+          ✎
+        </button>
         <span className="text-xs text-gray-500 ml-auto">
           {doneTasks.length}/{groupTasks.length} done
         </span>
+        {confirmDelete ? (
+          <span className="flex items-center gap-1 text-xs">
+            <button onClick={() => { setRemoving(true); setTimeout(onDelete, 160) }} className="px-1.5 py-0.5 rounded bg-red-700/80 text-[#DEDAD2]" title="Tasks stay, only the group is removed">
+              delete group?
+            </button>
+            <button onClick={() => setConfirmDelete(false)} className="px-1 text-gray-500" aria-label="Cancel delete">✕</button>
+          </span>
+        ) : (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="text-xs px-1 rounded text-gray-500 hover:text-red-700 hover:bg-black/10"
+            title="Delete group (tasks stay)"
+            aria-label={`Delete ${group.name}`}
+          >
+            🗑
+          </button>
+        )}
         <button
           onClick={() => setShowAdd(v => !v)}
           className={`text-xs px-1.5 py-0.5 rounded hover:bg-black/10 transition-colors ${colors.text}`}
@@ -900,7 +1091,7 @@ function GroupCard({
             draggable
             onDragStart={e => { markTaskDrag(e, task); onDragStartTask(task.id) }}
             onDragEnd={onDragEndTask}
-            className="cursor-grab active:cursor-grabbing"
+            className={`cursor-grab active:cursor-grabbing transition-opacity duration-150 ${draggingId === task.id ? 'opacity-40' : ''}`}
           >
             <TaskRow {...makeRowProps(task)} />
           </div>
